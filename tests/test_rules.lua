@@ -57,3 +57,15 @@ function TestRules:test_partition_user_rules_preserves_passthrough()
     "# comment",
   })
 end
+
+function TestRules:test_load_hosts_file_requires_canonical_hostnames()
+  local hosts, err = rules.load_hosts_file("Example.com\n", "always.txt")
+  lu.assertNil(hosts)
+  lu.assertStrContains(err, "canonical lowercase")
+end
+
+function TestRules:test_load_rules_file_rejects_block_rules()
+  local parsed, err = rules.load_rules_file("||example.com^\n", "passthrough.txt")
+  lu.assertNil(parsed)
+  lu.assertStrContains(err, "passthrough")
+end

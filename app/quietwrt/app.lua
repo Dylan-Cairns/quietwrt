@@ -61,8 +61,36 @@ Commands:
   apply     Alias for sync.
   status    Show current list counts and active mode. Use --json for machine-readable output.
   set       Toggle always, workday, or overnight on or off.
-  remove    Remove QuietWrt-managed state and restore the AdGuard backup if present.
+  restore   Restore always/workday list files from uploaded backup files and apply them.
 ]])
+end
+
+local function parse_restore_args(argv)
+  local parsed = {}
+  local index = 2
+
+  while index <= #argv do
+    local flag = argv[index]
+    local value = argv[index + 1]
+
+    if (flag ~= "--always" and flag ~= "--workday") or value == nil or value == "" then
+      return nil, "Usage: quietwrtctl restore [--always <path>] [--workday <path>]"
+    end
+
+    if flag == "--always" then
+      parsed.always_path = value
+    else
+      parsed.workday_path = value
+    end
+
+    index = index + 2
+  end
+
+  if not parsed.always_path and not parsed.workday_path then
+    return nil, "Usage: quietwrtctl restore [--always <path>] [--workday <path>]"
+  end
+
+  return parsed, nil
 end
 
 function M.run_cli(argv, options)
@@ -136,18 +164,20 @@ function M.run_cli(argv, options)
     return 0
   end
 
-  if command == "remove" then
-    local ok, result = service.remove(context)
+  if command == "restore" then
+    local restore_args, restore_error = parse_restore_args(argv)
+    if not restore_args then
+      io.stderr:write(restore_error, "\n")
+      return 1
+    end
+
+    local ok, result = service.restore_lists(context, restore_args)
     if not ok then
       io.stderr:write(result, "\n")
       return 1
     end
 
-    if result.restored_backup then
-      io.write("Removed QuietWrt-managed state and restored the AdGuard backup.\n")
-    else
-      io.write("Removed QuietWrt-managed state.\n")
-    end
+    io.write("Restored backup lists. Current mode: ", result.mode.label, ". Active rules: ", tostring(result.active_rule_count), ".\n")
     return 0
   end
 

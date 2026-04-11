@@ -105,13 +105,13 @@ function M.make_context(overrides)
     always_list_path = M.join_path(data_dir, "always-blocked.txt"),
     workday_list_path = M.join_path(data_dir, "workday-blocked.txt"),
     passthrough_rules_path = M.join_path(data_dir, "passthrough-rules.txt"),
-    config_backup_path = M.join_path(root, "AdGuardHome.yaml.bak"),
     restart_adguard_command = "restart-adguard",
     crontab_path = M.join_path(root, "root.crontab"),
     quietwrtctl_path = "/usr/bin/quietwrtctl",
     cgi_path = M.join_path(root, "www", "cgi-bin", "quietwrt"),
     module_dir = M.join_path(root, "usr", "lib", "lua", "quietwrt"),
-    quietwrt_config_path = M.join_path(root, "quietwrt.config"),
+    init_service_path = M.join_path(root, "etc", "init.d", "quietwrt"),
+    enable_init_service_command = "enable-init-service",
     restart_cron_command = "restart-cron",
     restart_firewall_command = "restart-firewall",
   }
@@ -119,6 +119,7 @@ function M.make_context(overrides)
   assert(M.create_dir(data_dir), "failed to create fixture data dir " .. data_dir)
   assert(M.create_dir(M.join_path(root, "www", "cgi-bin")), "failed to create fixture cgi dir")
   assert(M.create_dir(M.join_path(root, "usr", "lib", "lua", "quietwrt")), "failed to create fixture module dir")
+  assert(M.create_dir(M.join_path(root, "etc", "init.d")), "failed to create fixture init.d dir")
 
   local command_log = {}
   local execute = overrides.execute or function(log, command)

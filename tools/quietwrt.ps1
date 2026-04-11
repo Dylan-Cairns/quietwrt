@@ -21,6 +21,7 @@ $script:QuietWrtRemotePaths = [ordered]@{
     UploadRoot = '/tmp/quietwrt-upload'
     CgiPath = '/www/cgi-bin/quietwrt'
     CliPath = '/usr/bin/quietwrtctl'
+    InitPath = '/etc/init.d/quietwrt'
     ModuleDir = '/usr/lib/lua/quietwrt'
     AlwaysListPath = '/etc/quietwrt/always-blocked.txt'
     WorkdayListPath = '/etc/quietwrt/workday-blocked.txt'
@@ -38,11 +39,16 @@ function Get-QuietWrtRepoRoot {
     return $script:QuietWrtRepoRoot
 }
 
+function Get-QuietWrtBackupDirectory {
+    return (Join-Path (Get-QuietWrtRepoRoot) 'backups')
+}
+
 function Get-QuietWrtPayload {
     $repoRoot = Get-QuietWrtRepoRoot
     $payload = [ordered]@{
         Cgi = Join-Path $repoRoot 'app\quietwrt.cgi'
         Cli = Join-Path $repoRoot 'app\quietwrtctl.lua'
+        InitScript = Join-Path $repoRoot 'app\quietwrt.init'
         ModuleDir = Join-Path $repoRoot 'app\quietwrt'
     }
 
@@ -259,7 +265,7 @@ function New-QuietWrtStatusPlaceholder {
     }
 }
 
-function Test-QuietWrtInstalled {
+function Test-QuietWrtCliPresent {
     param(
         $Connection
     )
@@ -301,7 +307,7 @@ function Get-QuietWrtStatus {
         $Connection
     )
 
-    if (-not (Test-QuietWrtInstalled -Connection $Connection)) {
+    if (-not (Test-QuietWrtCliPresent -Connection $Connection)) {
         return New-QuietWrtStatusPlaceholder
     }
 
@@ -312,6 +318,14 @@ function Get-QuietWrtStatus {
     } catch {
         throw "quietwrtctl status --json returned invalid JSON: $($result.Output)"
     }
+}
+
+function Test-QuietWrtInstalled {
+    param(
+        $Connection
+    )
+
+    return [bool](Get-QuietWrtStatus -Connection $Connection).installed
 }
 
 function Get-QuietWrtPreflight {
@@ -445,15 +459,17 @@ mkdir -p $($remotePaths.UploadRoot)
 
     Send-QuietWrtSftpItem -Session $Connection.SftpSession -Path $payload.Cgi -Destination $remotePaths.UploadRoot | Out-Null
     Send-QuietWrtSftpItem -Session $Connection.SftpSession -Path $payload.Cli -Destination $remotePaths.UploadRoot | Out-Null
+    Send-QuietWrtSftpItem -Session $Connection.SftpSession -Path $payload.InitScript -Destination $remotePaths.UploadRoot | Out-Null
     Send-QuietWrtSftpItem -Session $Connection.SftpSession -Path $payload.ModuleDir -Destination $remotePaths.UploadRoot | Out-Null
 
     Invoke-QuietWrtRemote -Connection $Connection -TimeoutSeconds 120 -Command @"
 set -e
-mkdir -p /www/cgi-bin /usr/bin $($remotePaths.ModuleDir)
+mkdir -p /www/cgi-bin /usr/bin /etc/init.d $($remotePaths.ModuleDir)
 cp $($remotePaths.UploadRoot)/quietwrt.cgi $($remotePaths.CgiPath)
 cp $($remotePaths.UploadRoot)/quietwrtctl.lua $($remotePaths.CliPath)
+cp $($remotePaths.UploadRoot)/quietwrt.init $($remotePaths.InitPath)
 cp $($remotePaths.UploadRoot)/quietwrt/*.lua $($remotePaths.ModuleDir)/
-chmod 755 $($remotePaths.CgiPath) $($remotePaths.CliPath)
+chmod 755 $($remotePaths.CgiPath) $($remotePaths.CliPath) $($remotePaths.InitPath)
 rm -rf $($remotePaths.UploadRoot)
 "@ | Out-Null
 }
@@ -492,24 +508,6 @@ function Set-QuietWrtToggleState {
     return Get-QuietWrtStatus -Connection $Connection
 }
 
-function Remove-QuietWrtFromRouter {
-    param(
-        $Connection
-    )
-
-    if (-not (Test-QuietWrtInstalled -Connection $Connection)) {
-        throw 'QuietWrt is not installed on this router.'
-    }
-
-    Invoke-QuietWrtRemote -Connection $Connection -Command '/usr/bin/quietwrtctl remove' -TimeoutSeconds 120 | Out-Null
-    Invoke-QuietWrtRemote -Connection $Connection -Command @"
-rm -f $($script:QuietWrtRemotePaths.CgiPath) $($script:QuietWrtRemotePaths.CliPath)
-rm -rf $($script:QuietWrtRemotePaths.ModuleDir) $($script:QuietWrtRemotePaths.UploadRoot)
-"@ -TimeoutSeconds 120 | Out-Null
-
-    return New-QuietWrtStatusPlaceholder
-}
-
 function Get-QuietWrtBackupFileNames {
     param(
         [string]$OutputDirectory,
@@ -524,15 +522,37 @@ function Get-QuietWrtBackupFileNames {
     }
 }
 
+function Get-QuietWrtLatestBackupSelection {
+    param(
+        [string]$BackupDirectory = (Get-QuietWrtBackupDirectory)
+    )
+
+    $always = @()
+    $workday = @()
+
+    if (Test-Path -LiteralPath $BackupDirectory) {
+        $always = @(Get-ChildItem -LiteralPath $BackupDirectory -File -Filter 'quietwrt-always-*.txt' | Sort-Object Name -Descending)
+        $workday = @(Get-ChildItem -LiteralPath $BackupDirectory -File -Filter 'quietwrt-workday-*.txt' | Sort-Object Name -Descending)
+    }
+
+    return [pscustomobject]@{
+        Directory = $BackupDirectory
+        Always = if ($always.Count -gt 0) { $always[0] } else { $null }
+        Workday = if ($workday.Count -gt 0) { $workday[0] } else { $null }
+    }
+}
+
 function Backup-QuietWrtBlocklists {
     param(
         $Connection,
-        [string]$OutputDirectory = (Get-Location).Path
+        [string]$OutputDirectory = (Get-QuietWrtBackupDirectory)
     )
 
     if (-not (Test-QuietWrtInstalled -Connection $Connection)) {
         throw 'QuietWrt is not installed on this router.'
     }
+
+    $null = New-Item -ItemType Directory -Path $OutputDirectory -Force
 
     $check = Invoke-QuietWrtRemote -Connection $Connection -Command @'
 missing=0
@@ -564,6 +584,62 @@ exit $missing
     }
 
     return $destination
+}
+
+function Restore-QuietWrtBlocklists {
+    param(
+        $Connection,
+        [string]$BackupDirectory = (Get-QuietWrtBackupDirectory)
+    )
+
+    if (-not (Test-QuietWrtInstalled -Connection $Connection)) {
+        throw 'QuietWrt is not installed on this router.'
+    }
+
+    $selection = Get-QuietWrtLatestBackupSelection -BackupDirectory $BackupDirectory
+    if ($null -eq $selection.Always -and $null -eq $selection.Workday) {
+        throw "No backup files were found in $BackupDirectory."
+    }
+
+    Write-Host ''
+    Write-Host 'Restore from backups'
+    if ($selection.Always) {
+        Write-Host "  Always: $($selection.Always.Name)"
+    }
+    if ($selection.Workday) {
+        Write-Host "  Workday: $($selection.Workday.Name)"
+    }
+
+    $confirmation = Read-Host -Prompt 'Restore these backup files to the router? [y/N]'
+    if ($confirmation -notin @('y', 'Y', 'yes', 'YES', 'Yes')) {
+        throw 'Restore cancelled.'
+    }
+
+    $remoteRoot = "/tmp/quietwrt-restore-$([guid]::NewGuid().ToString('N'))"
+    Invoke-QuietWrtRemote -Connection $Connection -Command "mkdir -p $remoteRoot" -TimeoutSeconds 30 | Out-Null
+
+    try {
+        $restoreArgs = @()
+
+        if ($selection.Always) {
+            $remoteAlways = "$remoteRoot/$($selection.Always.Name)"
+            Send-QuietWrtSftpItem -Session $Connection.SftpSession -Path $selection.Always.FullName -Destination $remoteRoot | Out-Null
+            $restoreArgs += @('--always', $remoteAlways)
+        }
+
+        if ($selection.Workday) {
+            $remoteWorkday = "$remoteRoot/$($selection.Workday.Name)"
+            Send-QuietWrtSftpItem -Session $Connection.SftpSession -Path $selection.Workday.FullName -Destination $remoteRoot | Out-Null
+            $restoreArgs += @('--workday', $remoteWorkday)
+        }
+
+        $command = '/usr/bin/quietwrtctl restore ' + ($restoreArgs -join ' ')
+        Invoke-QuietWrtRemote -Connection $Connection -Command $command -TimeoutSeconds 120 | Out-Null
+    } finally {
+        Invoke-QuietWrtRemote -Connection $Connection -Command "rm -rf $remoteRoot" -TimeoutSeconds 30 -AllowFailure | Out-Null
+    }
+
+    return Get-QuietWrtStatus -Connection $Connection
 }
 
 function Show-QuietWrtStatus {
@@ -610,8 +686,8 @@ function Get-QuietWrtMenuLines {
         "2. $(if ($Status.always_enabled) { 'Disable' } else { 'Enable' }) always-on blocklist"
         "3. $(if ($Status.workday_enabled) { 'Disable' } else { 'Enable' }) workday blocklist"
         "4. $(if ($Status.overnight_enabled) { 'Disable' } else { 'Enable' }) overnight blocking"
-        '5. Remove QuietWrt'
-        '6. Backup both blocklists to this PC'
+        '5. Backup both blocklists to this PC'
+        '6. Restore latest backup'
         '0. Exit'
     )
 }
@@ -633,7 +709,7 @@ function Invoke-QuietWrtMenuSelection {
         [string]$Selection,
         $Connection,
         $Status,
-        [string]$OutputDirectory = (Get-Location).Path
+        [string]$BackupDirectory = (Get-QuietWrtBackupDirectory)
     )
 
     switch ($Selection) {
@@ -674,16 +750,7 @@ function Invoke-QuietWrtMenuSelection {
             }
         }
         '5' {
-            $updatedStatus = Remove-QuietWrtFromRouter -Connection $Connection
-            Show-QuietWrtStatus -Status $updatedStatus
-            return [pscustomobject]@{
-                Continue = $true
-                Status = $updatedStatus
-                BackupPaths = $null
-            }
-        }
-        '6' {
-            $backupPaths = Backup-QuietWrtBlocklists -Connection $Connection -OutputDirectory $OutputDirectory
+            $backupPaths = Backup-QuietWrtBlocklists -Connection $Connection -OutputDirectory $BackupDirectory
             Write-Host ''
             Write-Host 'Saved backups:'
             Write-Host "  $($backupPaths.Always)"
@@ -692,6 +759,15 @@ function Invoke-QuietWrtMenuSelection {
                 Continue = $true
                 Status = $Status
                 BackupPaths = $backupPaths
+            }
+        }
+        '6' {
+            $updatedStatus = Restore-QuietWrtBlocklists -Connection $Connection -BackupDirectory $BackupDirectory
+            Show-QuietWrtStatus -Status $updatedStatus
+            return [pscustomobject]@{
+                Continue = $true
+                Status = $updatedStatus
+                BackupPaths = $null
             }
         }
         '0' {
@@ -733,7 +809,7 @@ function Start-QuietWrtCli {
             $selection = Read-Host -Prompt 'Choose an option'
 
             try {
-                $result = Invoke-QuietWrtMenuSelection -Selection $selection -Connection $connection -Status $status -OutputDirectory (Get-Location).Path
+                $result = Invoke-QuietWrtMenuSelection -Selection $selection -Connection $connection -Status $status -BackupDirectory (Get-QuietWrtBackupDirectory)
                 $status = $result.Status
 
                 if (-not $result.Continue) {

@@ -2,6 +2,11 @@ local util = require("quietwrt.util")
 
 local M = {}
 
+local function format_source_line(source_name, line_number)
+  local label = source_name or "input"
+  return label .. " line " .. tostring(line_number)
+end
+
 local function is_ipv4(value)
   local a, b, c, d = value:match("^(%d+)%.(%d+)%.(%d+)%.(%d+)$")
   if not a then
@@ -132,6 +137,28 @@ function M.parse_hosts_file(content)
   return util.sorted_unique(hosts)
 end
 
+function M.load_hosts_file(content, source_name)
+  local hosts = {}
+
+  for line_number, line in ipairs(util.split_lines(content)) do
+    local text = util.trim(line)
+    if text ~= "" and text:sub(1, 1) ~= "#" then
+      local normalized, normalize_error = M.normalize_host_input(text)
+      if not normalized then
+        return nil, format_source_line(source_name, line_number) .. ": " .. normalize_error
+      end
+
+      if normalized ~= text then
+        return nil, format_source_line(source_name, line_number) .. ": Use canonical lowercase hostnames only."
+      end
+
+      table.insert(hosts, normalized)
+    end
+  end
+
+  return util.sorted_unique(hosts), nil
+end
+
 function M.serialize_hosts_file(hosts)
   local normalized = util.sorted_unique(hosts)
   if #normalized == 0 then
@@ -142,6 +169,24 @@ end
 
 function M.parse_rules_file(content)
   return util.stable_dedupe(util.split_lines(content))
+end
+
+function M.load_rules_file(content, source_name)
+  local parsed = {}
+
+  for line_number, line in ipairs(util.split_lines(content)) do
+    local text = util.trim(line)
+    if text ~= "" then
+      local kind = M.classify_rule(text)
+      if kind == "block" then
+        return nil, format_source_line(source_name, line_number) .. ": Block rules belong in the always/workday lists, not passthrough rules."
+      end
+
+      table.insert(parsed, text)
+    end
+  end
+
+  return util.stable_dedupe(parsed), nil
 end
 
 function M.serialize_rules_file(lines)

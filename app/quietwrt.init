@@ -1,0 +1,11 @@
+#!/bin/sh /etc/rc.common
+
+START=99
+
+start() {
+  [ -x /usr/bin/quietwrtctl ] || return 0
+  (
+    sleep 15
+    /usr/bin/quietwrtctl sync >/tmp/quietwrt-boot-sync.log 2>&1
+  ) &
+}
