@@ -2,7 +2,7 @@
 
 ## Summary
 
-Version 1 is a small on-router system with three parts:
+The current router-side system has three parts:
 
 - `Policy Manager`
 - `Router Enforcement`
@@ -14,59 +14,85 @@ Everything runs on the `GL.iNet GL-MT3000`.
 
 ### Policy Manager
 
-- reads the local blocklist and exception list
+The policy manager lives in shared Lua modules plus the `focusctl` CLI entrypoint.
+
+It:
+
+- reads the canonical source lists
 - validates and normalizes input
-- builds the active policy
-- applies updates safely
-- keeps the last-known-good policy
+- compiles the active AdGuard rules for the current time window
+- updates AdGuard Home safely
+- restores the previous AdGuard config if restart fails
+- installs the schedule that keeps policy and firewall state in sync
 
 ### Router Enforcement
 
-- uses `AdGuard Home` for domain blocking
-- uses firewall rules to reduce bypass
-- keeps `IPv6` disabled in v1
+Router enforcement uses:
+
+- `AdGuard Home` for DNS blocking
+- firewall rules to reduce DNS bypass
+- a scheduled firewall curfew that blocks `LAN -> WAN` traffic from `18:30` to `04:00`
+- `IPv6` disabled
 
 ### Local Management App
 
-- LAN-only
-- shows current status and blocklist
-- accepts one new blocked domain or URL at a time
-- triggers the policy manager after a successful submission
+The local app is a LAN-only CGI page.
+
+It:
+
+- shows current mode and protection status
+- shows the `always` and `workday` blocklists separately
+- accepts one new domain or URL at a time
+- lets the user choose which list to append to
+- triggers a policy apply after successful submission
 
 ## Persistent State
 
 The router stores:
 
-- local blocklist
-- exception list
-- compiled policy artifacts
-- active revision metadata
-- last apply result
+- `/etc/focus/always-blocked.txt`
+- `/etc/focus/workday-blocked.txt`
+- `/etc/focus/passthrough-rules.txt`
+- `/etc/AdGuardHome/config.yaml`
+- `/etc/crontabs/root`
+
+## Active Modes
+
+- `04:00` to `16:30`
+  - `always + workday`
+- `16:30` to `18:30`
+  - `always` only
+- `18:30` to `04:00`
+  - internet off
+
+Weekend behavior currently matches weekdays.
 
 ## Main Flows
 
 ### Manual Edit
 
-1. Update the local blocklist or exception list.
-2. Run the policy manager.
-3. Apply the new policy if validation succeeds.
+1. Update one of the files in `/etc/focus/`.
+2. Run `focusctl sync`.
+3. Keep the previous config if apply or restart fails.
 
 ### App Addition
 
 1. Submit a domain or URL in the local app.
-2. Normalize and append it to the local blocklist.
-3. Run the policy manager.
-4. Reload the page with the result.
+2. Normalize and validate the hostname.
+3. Update `always` or `workday`.
+4. Rebuild the active AdGuard rules for the current mode.
+5. Reload the page with the result.
 
-### Boot
+### Scheduled Sync
 
-1. Router starts.
-2. Last-known-good policy is re-applied.
-3. Normal enforcement resumes.
+1. `cron` runs `focusctl sync`.
+2. The policy manager computes the current mode from router local time.
+3. It writes the correct AdGuard rule set.
+4. It enables or disables the firewall curfew rule as needed.
 
 ## Boundaries
 
 - the router is the trust boundary
 - client devices are not trusted
 - the local app is not an admin console
-- the local app cannot delete entries, edit exceptions, or disable enforcement
+- the local app cannot delete entries, edit passthrough rules, or disable enforcement

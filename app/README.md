@@ -1,41 +1,44 @@
 # Focus App
 
-This directory contains the first router-side implementation of the local management app.
+This directory contains the router-side Focus app and shared policy code.
 
 ## Files
 
 - `focus.cgi`
-  - Lua CGI script for `uhttpd`
-  - reads AdGuard Home custom rules
-  - appends one new block rule at a time
-  - writes changes by updating `/etc/AdGuardHome/config.yaml`
-  - restarts AdGuard Home after each successful append
+  - Lua CGI entrypoint for `uhttpd`
+  - renders the LAN-only page
+  - handles add-entry submissions
+- `focusctl.lua`
+  - Lua CLI entrypoint for router-side install and scheduled sync
+- `focuslib/`
+  - shared modules for validation, schedule logic, AdGuard config updates, storage, and rendering
 
-## Assumptions
+## Router Layout
 
-This version assumes:
+The current app is a multi-file deployment:
 
-- `uhttpd` serves `/www` and `/www/cgi-bin`
-- AdGuard Home uses `/etc/AdGuardHome/config.yaml`
-- the router has `/etc/init.d/adguardhome`
+- copy `focus.cgi` to `/www/cgi-bin/focus`
+- copy `focusctl.lua` to `/usr/bin/focusctl`
+- copy `focuslib/` to `/usr/lib/lua/focuslib/`
 
-## Router Install
+## Responsibilities
 
-Copy the CGI script to the router and make it executable:
+- keep canonical source lists in `/etc/focus/`
+- compile the active AdGuard rules for the current time window
+- install cron-based sync points at `04:00`, `16:30`, and `18:30`
+- enforce the nightly internet curfew with a firewall rule
+- show both blocklists and the current effective mode in the web UI
 
-```sh
-scp -O app/focus.cgi root@192.168.8.1:/www/cgi-bin/focus
-ssh root@192.168.8.1 "chmod 755 /www/cgi-bin/focus"
+## Local Testing
+
+Run the local suite with:
+
+```powershell
+lua tests\run.lua
 ```
-
-Then open the page:
-
-- `https://192.168.8.1:8443/cgi-bin/focus`
-
-Use your router's actual LAN IP if it is different.
 
 ## Notes
 
-- This script only appends block rules.
-- It does not delete rules, edit rules, or manage exceptions.
-- It treats AdGuard Home `user_rules` as the source of truth.
+- the web page is still intentionally small and LAN-only
+- source-of-truth data now lives in `/etc/focus/`, not directly in AdGuard `user_rules`
+- non-block AdGuard `user_rules` are preserved in `/etc/focus/passthrough-rules.txt`

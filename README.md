@@ -4,34 +4,44 @@ This repo documents a distraction-blocking setup built around a `GL.iNet GL-MT30
 
 ## Goal
 
-- keep a single always-on blocklist on the router
+- keep two router-side blocklists:
+  - `always blocked`
+  - `workday blocked`
 - make bypass harder than device-side blocking
 - preserve narrow exceptions for required services such as a work VPN
-- provide a small LAN-only page that shows the current blocklist and lets new entries be appended
+- fully disable internet access each day from `18:30` to `04:00`
+- provide a small LAN-only page that shows status and lets new entries be appended
 
-## V1 Design
+## Current Design
 
-- `local blocklist`
-  - manually maintained list of blocked domains
-- `exception list`
-  - narrow carve-outs for required services
 - `policy manager`
-  - validates inputs, builds router-ready policy, applies it, keeps a last-known-good version
+  - validates input
+  - stores canonical lists on the router
+  - compiles the active AdGuard rules for the current time window
+  - applies updates safely and restores the previous config on restart failure
 - `router enforcement`
   - `AdGuard Home` for domain blocking
-  - firewall rules to reduce bypass
-  - `IPv6` disabled in v1
+  - firewall rules to reduce DNS bypass
+  - a scheduled LAN-to-WAN curfew rule
+  - `IPv6` disabled
 - `local management app`
   - LAN-only
-  - read-only blocklist view
-  - one append-only add-entry action
+  - shows current mode and both blocklists
+  - lets a new host be added to either `always` or `workday`
 
-## Operating Model
+## Schedule
 
-- the router is the enforcement point
-- client devices are not trusted
-- blocklist changes are manual or come from the local app
-- the active policy should survive reboot and bad updates
+- `04:00` to `16:30`: `always + workday`
+- `16:30` to `18:30`: `always` only
+- `18:30` to `04:00`: internet off
+
+## Local Testing
+
+Run the Lua test suite with:
+
+```powershell
+lua tests\run.lua
+```
 
 ## Docs
 

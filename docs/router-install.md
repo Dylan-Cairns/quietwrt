@@ -7,8 +7,7 @@ It assumes:
 - the router is being used in `Router` mode
 - `AdGuard Home` is the blocking engine
 - `IPv6` is disabled
-- the main blocklist is stored outside this repo
-- the local management app is deployed from `app/focus.cgi`
+- the local management app is deployed from this repo
 
 ## 1. Base Router Setup
 
@@ -38,6 +37,9 @@ It assumes:
    Path: `NETWORK -> DNS`
    Turn on `Override DNS Settings for All Clients`.
 
+10. Confirm the router timezone is correct.
+    The schedule depends on router local time.
+
 ## 2. Enable AdGuard Home
 
 1. Open `APPLICATIONS -> AdGuard Home`.
@@ -46,25 +48,17 @@ It assumes:
 
 3. Click `Apply`.
 
-4. Click `Settings Page`.
+4. Open the AdGuard Home settings page once.
 
-5. In AdGuard Home, open `Filters -> Custom filtering rules`.
+5. Back up the config:
 
-6. Paste the current router-ready blocklist from your external source.
-   The rules should already be in AdGuard format like:
-
-   ```txt
-   ||example.com^
-   ||www.example.org^
-   ```
-
-7. Save the custom filtering rules.
-
-8. Confirm blocking works from a client on the MT3000 network.
+```sh
+cp /etc/AdGuardHome/config.yaml /etc/AdGuardHome/config.yaml.bak
+```
 
 ## 3. Add Firewall Hardening
 
-These rules do two things:
+These rules:
 
 - redirect direct client DNS on port `53` back to the router
 - block `DNS over TLS` on port `853`
@@ -81,33 +75,12 @@ Create the DNS interception rule:
 
 ```sh
 uci -q delete firewall.dns_int
-```
-
-```sh
 uci set firewall.dns_int="redirect"
-```
-
-```sh
 uci set firewall.dns_int.name="Intercept-DNS"
-```
-
-```sh
 uci set firewall.dns_int.family="ipv4"
-```
-
-```sh
 uci set firewall.dns_int.proto="tcp udp"
-```
-
-```sh
 uci set firewall.dns_int.src="lan"
-```
-
-```sh
 uci set firewall.dns_int.src_dport="53"
-```
-
-```sh
 uci set firewall.dns_int.target="DNAT"
 ```
 
@@ -115,113 +88,114 @@ Create the `DoT` block rule:
 
 ```sh
 uci -q delete firewall.dot_fwd
-```
-
-```sh
 uci set firewall.dot_fwd="rule"
-```
-
-```sh
 uci set firewall.dot_fwd.name="Deny-DoT"
-```
-
-```sh
 uci set firewall.dot_fwd.family="ipv4"
-```
-
-```sh
 uci set firewall.dot_fwd.src="lan"
-```
-
-```sh
 uci set firewall.dot_fwd.dest="wan"
-```
-
-```sh
 uci set firewall.dot_fwd.dest_port="853"
-```
-
-```sh
 uci set firewall.dot_fwd.proto="tcp udp"
-```
-
-```sh
 uci set firewall.dot_fwd.target="REJECT"
-```
-
-Commit and restart the firewall:
-
-```sh
 uci commit firewall
-```
-
-```sh
 service firewall restart
 ```
 
-## 4. Deploy The Local Management App
+## 4. Deploy The Focus App
 
-The app is a single CGI script served by the router's built-in `uhttpd`.
-
-Copy the script from this repo to the router:
+Copy the CGI entrypoint:
 
 ```sh
 scp -O app/focus.cgi root@192.168.8.1:/www/cgi-bin/focus
-```
-
-Make it executable:
-
-```sh
 ssh root@192.168.8.1 "chmod 755 /www/cgi-bin/focus"
 ```
 
-Back up the AdGuard Home config once:
+Copy the CLI entrypoint:
 
 ```sh
-ssh root@192.168.8.1 "cp /etc/AdGuardHome/config.yaml /etc/AdGuardHome/config.yaml.bak"
+scp -O app/focusctl.lua root@192.168.8.1:/usr/bin/focusctl
+ssh root@192.168.8.1 "chmod 755 /usr/bin/focusctl"
 ```
 
-Open the app:
+Copy the shared Lua modules:
+
+```sh
+ssh root@192.168.8.1 "mkdir -p /usr/lib/lua/focuslib"
+scp -O app/focuslib/*.lua root@192.168.8.1:/usr/lib/lua/focuslib/
+```
+
+Install the focus schedule and seed the canonical list files:
+
+```sh
+ssh root@192.168.8.1 "/usr/bin/focusctl install"
+```
+
+This creates and maintains:
+
+- `/etc/focus/always-blocked.txt`
+- `/etc/focus/workday-blocked.txt`
+- `/etc/focus/passthrough-rules.txt`
+
+and installs `cron` sync points at:
+
+- `04:00`
+- `16:30`
+- `18:30`
+
+## 5. Open The App
+
+Open:
 
 - `https://192.168.8.1:8443/cgi-bin/focus`
 
 The page should:
 
-- show the current custom rules
+- show the current mode
 - show `Protection: enabled`
+- show separate `Always blocked` and `Workday blocked` lists
 - allow one new domain, hostname, or URL to be added at a time
 
-The app writes changes to:
-
-- `/etc/AdGuardHome/config.yaml`
-
-and restarts AdGuard Home after each successful add.
-
-## 5. Verify The Final State
+## 6. Verify The Final State
 
 Check these from a client connected to the MT3000:
 
-1. A blocked site is blocked.
-2. A manually added site from `/cgi-bin/focus` is blocked.
-3. Your work VPN still connects.
-4. A client manually pointed at `8.8.8.8` still gets filtered.
-5. `DNS over TLS` on port `853` no longer works.
+1. A site added to `Always blocked` is blocked at `10:00`.
+2. A site added to `Workday blocked` is blocked at `10:00`.
+3. A `Workday blocked` site is no longer blocked between `16:30` and `18:30`.
+4. Internet access is fully unavailable between `18:30` and `04:00`.
+5. Router-local access to `https://<router-ip>:8443/cgi-bin/focus` still works during the curfew window.
+6. A client manually pointed at `8.8.8.8` still gets filtered.
+7. `DNS over TLS` on port `853` no longer works.
 
-## 6. Useful Recovery Commands
+## 7. Useful Commands
 
-Restore the AdGuard Home config backup:
+Show current status:
+
+```sh
+/usr/bin/focusctl status
+```
+
+Force an immediate resync:
+
+```sh
+/usr/bin/focusctl sync
+```
+
+Restore the AdGuard config backup:
 
 ```sh
 cp /etc/AdGuardHome/config.yaml.bak /etc/AdGuardHome/config.yaml
-```
-
-Restart AdGuard Home:
-
-```sh
 /etc/init.d/adguardhome restart
 ```
 
-Show the local app restart log:
+Temporarily disable the curfew rule by hand:
+
+```sh
+uci set firewall.focus_curfew.enabled='0'
+uci commit firewall
+service firewall restart
+```
+
+Show the AdGuard restart log:
 
 ```sh
 cat /tmp/focus-adguard-restart.log
