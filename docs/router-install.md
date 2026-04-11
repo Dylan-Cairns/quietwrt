@@ -1,202 +1,167 @@
 # Router Install
 
-This document describes the current end-to-end setup for the `GL.iNet GL-MT3000` on stock GL firmware.
+This document describes the current end-to-end setup for `QuietWrt` on a `GL.iNet GL-MT3000` running stock GL firmware.
 
-It assumes:
+The preferred flow is now:
 
-- the router is being used in `Router` mode
-- `AdGuard Home` is the blocking engine
-- `IPv6` is disabled
-- the local management app is deployed from this repo
+1. complete the router UI prerequisites once
+2. run the local PowerShell CLI
+3. let the router-side Lua control plane handle install, update, toggles, and removal
 
-## 1. Base Router Setup
+## 1. Router UI Prerequisites
 
-1. Connect the router in the real traffic path.
-   Use `modem -> MT3000 WAN`.
+Before running the local CLI, confirm these in the GL.iNet admin UI:
 
-2. Log into the GL.iNet admin UI.
+1. the router is in `Router` mode
+2. `SSH Local Access` is enabled
+3. `WAN Remote Access` stays off
+4. `IPv6` is disabled
+5. `Override DNS Settings for All Clients` is enabled
+6. the router timezone is correct
+7. `AdGuard Home` is enabled
 
-3. Update to the current stock GL firmware.
+QuietWrt will check some of these over SSH, but a few GL.iNet-specific settings are still safest to confirm in the UI.
 
-4. Confirm the router is in `Router` mode.
-   Path: `NETWORK -> Network Mode`
+## 2. Local Machine Prerequisites
 
-5. Set the router admin password.
-   Path: `SYSTEM -> Security`
+On the Windows PC where you will run QuietWrt:
 
-6. Keep WAN remote access off.
-   Path: `SYSTEM -> Security`
+1. install `PowerShell 7`
+2. install `Posh-SSH`
+3. clone this repo
 
-7. Enable `SSH Local Access`.
-   Path: `SYSTEM -> Security`
+Install `Posh-SSH` once with:
 
-8. Disable `IPv6`.
-   Path: `NETWORK -> IPv6`
-
-9. Enable router DNS override.
-   Path: `NETWORK -> DNS`
-   Turn on `Override DNS Settings for All Clients`.
-
-10. Confirm the router timezone is correct.
-    The schedule depends on router local time.
-
-## 2. Enable AdGuard Home
-
-1. Open `APPLICATIONS -> AdGuard Home`.
-
-2. Turn `AdGuard Home` on.
-
-3. Click `Apply`.
-
-4. Open the AdGuard Home settings page once.
-
-5. Back up the config:
-
-```sh
-cp /etc/AdGuardHome/config.yaml /etc/AdGuardHome/config.yaml.bak
+```powershell
+Install-Module -Name Posh-SSH -Scope CurrentUser
 ```
 
-## 3. Add Firewall Hardening
+## 3. Install Or Update QuietWrt
 
-These rules:
+From the repo root, run:
 
-- redirect direct client DNS on port `53` back to the router
-- block `DNS over TLS` on port `853`
-
-SSH to the router:
-
-```sh
-ssh root@192.168.8.1
+```powershell
+pwsh ./tools/quietwrt.ps1
 ```
 
-Replace `192.168.8.1` if your router uses a different LAN IP.
+The CLI prompts for:
 
-Create the DNS interception rule:
+- router host
+  - default: `192.168.8.1`
+- router username
+  - default: `root`
+- router password
 
-```sh
-uci -q delete firewall.dns_int
-uci set firewall.dns_int="redirect"
-uci set firewall.dns_int.name="Intercept-DNS"
-uci set firewall.dns_int.family="ipv4"
-uci set firewall.dns_int.proto="tcp udp"
-uci set firewall.dns_int.src="lan"
-uci set firewall.dns_int.src_dport="53"
-uci set firewall.dns_int.target="DNAT"
+After connecting, it:
+
+- checks whether QuietWrt is installed
+- fetches the current router status
+- shows a numbered menu
+
+Choose:
+
+```text
+1. Install/Update QuietWrt
 ```
 
-Create the `DoT` block rule:
+The installer:
 
-```sh
-uci -q delete firewall.dot_fwd
-uci set firewall.dot_fwd="rule"
-uci set firewall.dot_fwd.name="Deny-DoT"
-uci set firewall.dot_fwd.family="ipv4"
-uci set firewall.dot_fwd.src="lan"
-uci set firewall.dot_fwd.dest="wan"
-uci set firewall.dot_fwd.dest_port="853"
-uci set firewall.dot_fwd.proto="tcp udp"
-uci set firewall.dot_fwd.target="REJECT"
-uci commit firewall
-service firewall restart
+- uploads:
+  - `app/quietwrt.cgi` to `/www/cgi-bin/quietwrt`
+  - `app/quietwrtctl.lua` to `/usr/bin/quietwrtctl`
+  - `app/quietwrt/*.lua` to `/usr/lib/lua/quietwrt/`
+- ensures executable permissions
+- ensures a one-time AdGuard backup exists
+- creates or refreshes UCI state in `/etc/config/quietwrt`
+- installs or refreshes the managed cron block
+- installs or refreshes these QuietWrt-managed firewall sections:
+  - `firewall.quietwrt_dns_int`
+  - `firewall.quietwrt_dot_fwd`
+  - `firewall.quietwrt_curfew`
+- applies the current schedule immediately
+
+## 4. Daily Control Menu
+
+The local CLI keeps one SSH and SFTP session open and offers:
+
+```text
+1. Install/Update QuietWrt
+2. Enable/Disable always-on blocklist
+3. Enable/Disable workday blocklist
+4. Enable/Disable overnight blocking
+5. Remove QuietWrt
+6. Backup both blocklists to this PC
 ```
 
-## 4. Deploy The QuietWrt App
+After any state-changing action, it prints the refreshed router status.
 
-Copy the CGI entrypoint:
+The backup option downloads:
 
-```sh
-scp -O app/quietwrt.cgi root@192.168.8.1:/www/cgi-bin/quietwrt
-ssh root@192.168.8.1 "chmod 755 /www/cgi-bin/quietwrt"
-```
+- `/etc/quietwrt/always-blocked.txt`
+- `/etc/quietwrt/workday-blocked.txt`
 
-Copy the CLI entrypoint:
+and saves them in the current local directory with timestamped names such as:
 
-```sh
-scp -O app/quietwrtctl.lua root@192.168.8.1:/usr/bin/quietwrtctl
-ssh root@192.168.8.1 "chmod 755 /usr/bin/quietwrtctl"
-```
+- `quietwrt-always-YYYY-MM-DD-HHMMSS.txt`
+- `quietwrt-workday-YYYY-MM-DD-HHMMSS.txt`
 
-Copy the shared Lua modules:
+## 5. Router-Side Defaults
 
-```sh
-ssh root@192.168.8.1 "mkdir -p /usr/lib/lua/quietwrt"
-scp -O app/quietwrt/*.lua root@192.168.8.1:/usr/lib/lua/quietwrt/
-```
+QuietWrt stores persistent toggle state in UCI:
 
-Install the QuietWrt schedule and seed the canonical list files:
+- `quietwrt.settings.always_enabled`
+- `quietwrt.settings.workday_enabled`
+- `quietwrt.settings.overnight_enabled`
 
-```sh
-ssh root@192.168.8.1 "/usr/bin/quietwrtctl install"
-```
-
-This creates and maintains:
+Canonical source data lives in:
 
 - `/etc/quietwrt/always-blocked.txt`
 - `/etc/quietwrt/workday-blocked.txt`
 - `/etc/quietwrt/passthrough-rules.txt`
 
-and installs `cron` sync points at:
+Schedule windows remain:
 
-- `04:00`
-- `16:30`
-- `18:30`
-
-## 5. Open The App
-
-Open:
-
-- `https://192.168.8.1:8443/cgi-bin/quietwrt`
-
-The page should:
-
-- show the current mode
-- show `Protection: enabled`
-- show separate `Always blocked` and `Workday blocked` lists
-- allow one new domain, hostname, or URL to be added at a time
+- `04:00` to `16:30`
+  - `always + workday`
+- `16:30` to `18:30`
+  - `always` only
+- `18:30` to `04:00`
+  - internet off
 
 ## 6. Verify The Final State
 
-Check these from a client connected to the MT3000:
+After install, confirm:
 
-1. A site added to `Always blocked` is blocked at `10:00`.
-2. A site added to `Workday blocked` is blocked at `10:00`.
-3. A `Workday blocked` site is no longer blocked between `16:30` and `18:30`.
-4. Internet access is fully unavailable between `18:30` and `04:00`.
-5. Router-local access to `https://<router-ip>:8443/cgi-bin/quietwrt` still works during the curfew window.
-6. A client manually pointed at `8.8.8.8` still gets filtered.
-7. `DNS over TLS` on port `853` no longer works.
+1. a site added to `Always blocked` is blocked at `10:00`
+2. a site added to `Workday blocked` is blocked at `10:00`
+3. a `Workday blocked` site is no longer blocked between `16:30` and `18:30`
+4. internet access is fully unavailable between `18:30` and `04:00` when overnight blocking is enabled
+5. router-local access to `https://<router-ip>:8443/cgi-bin/quietwrt` still works during the curfew window
+6. direct client DNS on `53` is intercepted
+7. direct `DoT` on `853` is blocked
 
-## 7. Useful Commands
+## 7. Router Commands
 
-Show current status:
+The local CLI uses this router-side surface:
+
+```sh
+/usr/bin/quietwrtctl install
+/usr/bin/quietwrtctl sync
+/usr/bin/quietwrtctl status --json
+/usr/bin/quietwrtctl set always on
+/usr/bin/quietwrtctl set always off
+/usr/bin/quietwrtctl set workday on
+/usr/bin/quietwrtctl set workday off
+/usr/bin/quietwrtctl set overnight on
+/usr/bin/quietwrtctl set overnight off
+/usr/bin/quietwrtctl remove
+```
+
+Useful direct checks:
 
 ```sh
 /usr/bin/quietwrtctl status
-```
-
-Force an immediate resync:
-
-```sh
+/usr/bin/quietwrtctl status --json
 /usr/bin/quietwrtctl sync
-```
-
-Restore the AdGuard config backup:
-
-```sh
-cp /etc/AdGuardHome/config.yaml.bak /etc/AdGuardHome/config.yaml
-/etc/init.d/adguardhome restart
-```
-
-Temporarily disable the curfew rule by hand:
-
-```sh
-uci set firewall.quietwrt_curfew.enabled='0'
-uci commit firewall
-service firewall restart
-```
-
-Show the AdGuard restart log:
-
-```sh
 cat /tmp/quietwrt-adguard-restart.log
 ```

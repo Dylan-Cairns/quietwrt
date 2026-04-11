@@ -59,7 +59,9 @@ Commands:
   install   Bootstrap list files, install cron sync, and apply the current mode.
   sync      Rebuild AdGuard rules for the current time and update curfew firewall state.
   apply     Alias for sync.
-  status    Show current list counts and active mode.
+  status    Show current list counts and active mode. Use --json for machine-readable output.
+  set       Toggle always, workday, or overnight on or off.
+  remove    Remove QuietWrt-managed state and restore the AdGuard backup if present.
 ]])
 end
 
@@ -88,12 +90,64 @@ function M.run_cli(argv, options)
   end
 
   if command == "status" then
-    local ok, output = service.status(context)
+    local as_json = argv[2] == "--json"
+    local ok, output = service.status(context, {
+      json = as_json,
+    })
     if not ok then
       io.stderr:write(output, "\n")
       return 1
     end
     io.write(output, "\n")
+    return 0
+  end
+
+  if command == "set" then
+    local toggle_name = argv[2]
+    local raw_state = argv[3]
+    local enabled
+
+    if raw_state == "on" then
+      enabled = true
+    elseif raw_state == "off" then
+      enabled = false
+    else
+      io.stderr:write("Usage: quietwrtctl set <always|workday|overnight> <on|off>\n")
+      return 1
+    end
+
+    local ok, result = service.set_toggle(context, toggle_name, enabled)
+    if not ok then
+      io.stderr:write(result, "\n")
+      return 1
+    end
+
+    io.write(
+      "Set ",
+      toggle_name,
+      " ",
+      raw_state,
+      ". Current mode: ",
+      result.mode.label,
+      ". Active rules: ",
+      tostring(result.active_rule_count),
+      ".\n"
+    )
+    return 0
+  end
+
+  if command == "remove" then
+    local ok, result = service.remove(context)
+    if not ok then
+      io.stderr:write(result, "\n")
+      return 1
+    end
+
+    if result.restored_backup then
+      io.write("Removed QuietWrt-managed state and restored the AdGuard backup.\n")
+    else
+      io.write("Removed QuietWrt-managed state.\n")
+    end
     return 0
   end
 

@@ -85,6 +85,15 @@ function M.write_file(path, content)
   return true
 end
 
+function M.path_exists(path)
+  local handle = io.open(path, "rb")
+  if handle then
+    handle:close()
+    return true
+  end
+  return false
+end
+
 function M.make_context(overrides)
   overrides = overrides or {}
 
@@ -96,13 +105,20 @@ function M.make_context(overrides)
     always_list_path = M.join_path(data_dir, "always-blocked.txt"),
     workday_list_path = M.join_path(data_dir, "workday-blocked.txt"),
     passthrough_rules_path = M.join_path(data_dir, "passthrough-rules.txt"),
+    config_backup_path = M.join_path(root, "AdGuardHome.yaml.bak"),
     restart_adguard_command = "restart-adguard",
     crontab_path = M.join_path(root, "root.crontab"),
     quietwrtctl_path = "/usr/bin/quietwrtctl",
+    cgi_path = M.join_path(root, "www", "cgi-bin", "quietwrt"),
+    module_dir = M.join_path(root, "usr", "lib", "lua", "quietwrt"),
+    quietwrt_config_path = M.join_path(root, "quietwrt.config"),
     restart_cron_command = "restart-cron",
+    restart_firewall_command = "restart-firewall",
   }
 
   assert(M.create_dir(data_dir), "failed to create fixture data dir " .. data_dir)
+  assert(M.create_dir(M.join_path(root, "www", "cgi-bin")), "failed to create fixture cgi dir")
+  assert(M.create_dir(M.join_path(root, "usr", "lib", "lua", "quietwrt")), "failed to create fixture module dir")
 
   local command_log = {}
   local execute = overrides.execute or function(log, command)
@@ -110,17 +126,27 @@ function M.make_context(overrides)
     return 0
   end
 
+  local capture_map = overrides.capture_map or {}
+  local capture = overrides.capture or function(command)
+    if capture_map[command] ~= nil then
+      return capture_map[command]
+    end
+    return ""
+  end
+
   local env = {
     read_file = M.read_file,
     write_file = M.write_file,
     rename_file = os.rename,
     remove_file = os.remove,
+    file_exists = M.path_exists,
     ensure_dir = function(path)
       return M.create_dir(path)
     end,
     execute = function(command)
       return execute(command_log, command)
     end,
+    capture = capture,
     now = overrides.now or function()
       return { hour = 10, min = 0 }
     end,

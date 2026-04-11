@@ -39,6 +39,12 @@ The router should enforce:
 - direct WAN `TCP/UDP 853` is blocked
 - a managed `LAN -> WAN` reject rule named `QuietWrt-Internet-Curfew`
 
+QuietWrt manages these UCI firewall sections:
+
+- `firewall.quietwrt_dns_int`
+- `firewall.quietwrt_dot_fwd`
+- `firewall.quietwrt_curfew`
+
 The curfew rule is:
 
 - disabled from `04:00` to `18:30`
@@ -59,13 +65,19 @@ Each run:
 - computes the current mode
 - rewrites AdGuard `user_rules`
 - enables or disables the firewall curfew rule
+- honors these persistent UCI flags:
+  - `quietwrt.settings.always_enabled`
+  - `quietwrt.settings.workday_enabled`
+  - `quietwrt.settings.overnight_enabled`
 
 ## Boot And Failure Behavior
 
 - canonical blocklist files live in `/etc/quietwrt/`
+- toggle state lives in `/etc/config/quietwrt`
 - AdGuard config changes are written atomically
 - if AdGuard restart fails, the previous config is restored
-- running `quietwrtctl install` re-installs the schedule and applies the current mode
+- running `quietwrtctl install` re-installs the schedule, reconciles managed firewall state, and applies the current mode
+- running `quietwrtctl remove` removes managed cron, firewall, and UCI state and restores the AdGuard backup when present
 
 ## Acceptance Criteria
 

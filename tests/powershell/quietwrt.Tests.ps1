@@ -1,0 +1,176 @@
+$scriptPath = Join-Path $PSScriptRoot '..\..\tools\quietwrt.ps1'
+. $scriptPath
+
+Describe 'QuietWrt PowerShell CLI' {
+    It 'renders menu lines that reflect current toggle states' {
+        $status = [pscustomobject]@{
+            always_enabled = $true
+            workday_enabled = $false
+            overnight_enabled = $true
+        }
+
+        $lines = Get-QuietWrtMenuLines -Status $status
+
+        $lines[0] | Should Be '1. Install/Update QuietWrt'
+        $lines[1] | Should Be '2. Disable always-on blocklist'
+        $lines[2] | Should Be '3. Enable workday blocklist'
+        $lines[3] | Should Be '4. Disable overnight blocking'
+        $lines[5] | Should Be '6. Backup both blocklists to this PC'
+    }
+
+    It 'returns a not-installed placeholder when quietwrtctl is absent' {
+        Mock Test-QuietWrtInstalled { $false }
+
+        $status = Get-QuietWrtStatus -Connection ([pscustomobject]@{})
+
+        $status.installed | Should Be $false
+        $status.mode | Should Be 'not_installed'
+    }
+
+    It 'throws when quietwrtctl status returns invalid json' {
+        Mock Test-QuietWrtInstalled { $true }
+        Mock Invoke-QuietWrtRemote { [pscustomobject]@{ ExitStatus = 0; Output = 'not-json'; Raw = $null } }
+
+        { Get-QuietWrtStatus -Connection ([pscustomobject]@{}) } | Should Throw 'invalid JSON'
+    }
+
+    It 'throws a clear error when ssh session creation fails' {
+        Mock Import-QuietWrtDependencies { }
+        Mock New-QuietWrtSshSession { throw 'boom' }
+
+        $credential = New-Object System.Management.Automation.PSCredential(
+            'root',
+            (ConvertTo-SecureString 'secret' -AsPlainText -Force)
+        )
+
+        { Connect-QuietWrtRouter -RouterHost '192.168.8.1' -RouterUser 'root' -RouterPort 22 -Credential $credential } | Should Throw 'Could not connect'
+    }
+
+    It 'dispatches the workday toggle menu action to the router control plane' {
+        $status = [pscustomobject]@{
+            always_enabled = $true
+            workday_enabled = $true
+            overnight_enabled = $true
+        }
+        $updatedStatus = [pscustomobject]@{
+            installed = $true
+            always_enabled = $true
+            workday_enabled = $false
+            overnight_enabled = $true
+            mode_label = 'Always only'
+            protection_enabled = $true
+            always_count = 1
+            workday_count = 0
+            active_rule_count = 1
+            hardening = [pscustomobject]@{
+                dns_intercept = $true
+                dot_block = $true
+                overnight_rule = $true
+            }
+            warnings = @()
+        }
+
+        Mock Set-QuietWrtToggleState { $updatedStatus } -ParameterFilter { $ToggleName -eq 'workday' -and $Enabled -eq $false }
+        Mock Show-QuietWrtStatus { }
+
+        $result = Invoke-QuietWrtMenuSelection -Selection '3' -Connection ([pscustomobject]@{}) -Status $status -OutputDirectory $TestDrive
+
+        $result.Status.workday_enabled | Should Be $false
+        Assert-MockCalled Set-QuietWrtToggleState -Times 1 -Exactly
+    }
+
+    It 'dispatches install/update from the menu and returns the updated status' {
+        $status = New-QuietWrtStatusPlaceholder
+        $updatedStatus = [pscustomobject]@{
+            installed = $true
+            always_enabled = $true
+            workday_enabled = $true
+            overnight_enabled = $true
+            mode_label = 'Always + Workday'
+            protection_enabled = $true
+            always_count = 2
+            workday_count = 3
+            active_rule_count = 5
+            hardening = [pscustomobject]@{
+                dns_intercept = $true
+                dot_block = $true
+                overnight_rule = $false
+            }
+            warnings = @()
+        }
+
+        Mock Install-QuietWrtOnRouter { $updatedStatus }
+        Mock Show-QuietWrtStatus { }
+
+        $result = Invoke-QuietWrtMenuSelection -Selection '1' -Connection ([pscustomobject]@{}) -Status $status -OutputDirectory $TestDrive
+
+        $result.Status.installed | Should Be $true
+        Assert-MockCalled Install-QuietWrtOnRouter -Times 1 -Exactly
+    }
+
+    It 'creates timestamped backup filenames' {
+        $names = Get-QuietWrtBackupFileNames -OutputDirectory 'C:\temp' -Timestamp ([datetime]'2026-04-10T08:09:10')
+
+        $names.Always | Should Be 'C:\temp\quietwrt-always-2026-04-10-080910.txt'
+        $names.Workday | Should Be 'C:\temp\quietwrt-workday-2026-04-10-080910.txt'
+    }
+
+    It 'throws if a backup source file is missing on the router' {
+        Mock Test-QuietWrtInstalled { $true }
+        Mock Invoke-QuietWrtRemote { [pscustomobject]@{ ExitStatus = 1; Output = '/etc/quietwrt/workday-blocked.txt'; Raw = $null } }
+
+        { Backup-QuietWrtBlocklists -Connection ([pscustomobject]@{}) -OutputDirectory $TestDrive } | Should Throw 'missing'
+    }
+
+    It 'downloads both blocklists and saves them with timestamped names' {
+        $now = [datetime]'2026-04-10T08:09:10'
+        $expected = Get-QuietWrtBackupFileNames -OutputDirectory $TestDrive -Timestamp $now
+
+        Mock Test-QuietWrtInstalled { $true }
+        Mock Invoke-QuietWrtRemote { [pscustomobject]@{ ExitStatus = 0; Output = ''; Raw = $null } }
+        Mock Get-QuietWrtBackupFileNames { $expected }
+        Mock Receive-QuietWrtSftpItem {
+            param($Session, $Path, $Destination)
+            if ($Path -eq '/etc/quietwrt/always-blocked.txt') {
+                Set-Content -LiteralPath (Join-Path $Destination 'always-blocked.txt') -Value 'always.example' -NoNewline
+            }
+            if ($Path -eq '/etc/quietwrt/workday-blocked.txt') {
+                Set-Content -LiteralPath (Join-Path $Destination 'workday-blocked.txt') -Value 'workday.example' -NoNewline
+            }
+        }
+
+        $paths = Backup-QuietWrtBlocklists -Connection ([pscustomobject]@{ SftpSession = [pscustomobject]@{} }) -OutputDirectory $TestDrive
+
+        $paths.Always | Should Be $expected.Always
+        $paths.Workday | Should Be $expected.Workday
+        (Get-Content -LiteralPath $paths.Always -Raw) | Should Be 'always.example'
+        (Get-Content -LiteralPath $paths.Workday -Raw) | Should Be 'workday.example'
+    }
+
+    It 'uploads the router payload over sftp and stages it into the final paths' {
+        $payloadRoot = Join-Path $TestDrive 'payload'
+        $moduleDir = Join-Path $payloadRoot 'quietwrt'
+        $null = New-Item -ItemType Directory -Path $moduleDir -Force
+        $cgiPath = Join-Path $payloadRoot 'quietwrt.cgi'
+        $cliPath = Join-Path $payloadRoot 'quietwrtctl.lua'
+        Set-Content -LiteralPath $cgiPath -Value '#!/usr/bin/lua'
+        Set-Content -LiteralPath $cliPath -Value '#!/usr/bin/lua'
+        Set-Content -LiteralPath (Join-Path $moduleDir 'app.lua') -Value 'return {}'
+
+        Mock Get-QuietWrtPayload {
+            [pscustomobject]@{
+                Cgi = $cgiPath
+                Cli = $cliPath
+                ModuleDir = $moduleDir
+            }
+        }
+        Mock Invoke-QuietWrtRemote { [pscustomobject]@{ ExitStatus = 0; Output = ''; Raw = $null } }
+        Mock Send-QuietWrtSftpItem { }
+
+        Upload-QuietWrtPayload -Connection ([pscustomobject]@{ SftpSession = [pscustomobject]@{}; SshSession = [pscustomobject]@{} })
+
+        Assert-MockCalled Send-QuietWrtSftpItem -Times 3 -Exactly
+        Assert-MockCalled Invoke-QuietWrtRemote -Times 1 -Exactly -ParameterFilter { $Command -match '^\s*rm -rf /tmp/quietwrt-upload\s+mkdir -p /tmp/quietwrt-upload\s*$' }
+        Assert-MockCalled Invoke-QuietWrtRemote -Times 1 -Exactly -ParameterFilter { $TimeoutSeconds -eq 120 -and $Command -match 'cp /tmp/quietwrt-upload/quietwrt.cgi' }
+    }
+}

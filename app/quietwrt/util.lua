@@ -130,4 +130,80 @@ function M.remove_value(items, value)
   return result
 end
 
+function M.shell_quote(value)
+  return "'" .. tostring(value or ""):gsub("'", "'\\''") .. "'"
+end
+
+local function json_escape(value)
+  local escaped = tostring(value or "")
+  escaped = escaped:gsub("\\", "\\\\")
+  escaped = escaped:gsub('"', '\\"')
+  escaped = escaped:gsub("\b", "\\b")
+  escaped = escaped:gsub("\f", "\\f")
+  escaped = escaped:gsub("\n", "\\n")
+  escaped = escaped:gsub("\r", "\\r")
+  escaped = escaped:gsub("\t", "\\t")
+  return escaped
+end
+
+local function is_array(value)
+  if type(value) ~= "table" then
+    return false
+  end
+
+  local count = 0
+  for key, _ in pairs(value) do
+    if type(key) ~= "number" or key < 1 or key % 1 ~= 0 then
+      return false
+    end
+    count = count + 1
+  end
+
+  return count == #value
+end
+
+function M.json_encode(value)
+  local value_type = type(value)
+
+  if value_type == "nil" then
+    return "null"
+  end
+
+  if value_type == "boolean" then
+    return value and "true" or "false"
+  end
+
+  if value_type == "number" then
+    return tostring(value)
+  end
+
+  if value_type == "string" then
+    return '"' .. json_escape(value) .. '"'
+  end
+
+  if value_type ~= "table" then
+    error("Unsupported JSON value type: " .. value_type)
+  end
+
+  if is_array(value) then
+    local items = {}
+    for _, item in ipairs(value) do
+      table.insert(items, M.json_encode(item))
+    end
+    return "[" .. table.concat(items, ",") .. "]"
+  end
+
+  local keys = {}
+  for key, _ in pairs(value) do
+    table.insert(keys, key)
+  end
+  table.sort(keys)
+
+  local parts = {}
+  for _, key in ipairs(keys) do
+    table.insert(parts, M.json_encode(tostring(key)) .. ":" .. M.json_encode(value[key]))
+  end
+  return "{" .. table.concat(parts, ",") .. "}"
+end
+
 return M
