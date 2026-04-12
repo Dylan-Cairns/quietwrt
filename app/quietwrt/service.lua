@@ -478,6 +478,17 @@ local function build_view_state(parsed_config, lists, settings, current_mode, sc
   }
 end
 
+local function format_router_time(now_table)
+  local hour = tonumber(now_table and now_table.hour)
+  local min = tonumber(now_table and now_table.min)
+
+  if hour == nil or min == nil then
+    return "Unknown"
+  end
+
+  return string.format("%02d:%02d", hour, min)
+end
+
 local function detect_installed(env, paths)
   return read_install_state(env, paths).installed
 end
@@ -891,6 +902,7 @@ local function status_snapshot(context)
   local install_state = read_install_state(context.env, context.paths)
   local installed = install_state.installed
   local settings = read_settings(context.env, installed)
+  local now_table = context.env.now()
   local parsed_config, config_error = read_adguard_state(context.env, context.paths)
   local lists = empty_lists_state()
   local warnings = {}
@@ -916,7 +928,7 @@ local function status_snapshot(context)
     end
   end
 
-  local effective_mode, scheduled_mode = current_effective_mode(settings, context.env.now())
+  local effective_mode, scheduled_mode = current_effective_mode(settings, now_table)
   local hardening = installed and hardening_status(context.env) or {
     dns_intercept = false,
     dot_block = false,
@@ -933,7 +945,10 @@ local function status_snapshot(context)
     enforcement_ready
   )
   snapshot.install_state = install_state
+  snapshot.router_time = format_router_time(now_table)
   snapshot.scheduled_mode = scheduled_mode
+  snapshot.workday_active = scheduled_mode.code == "always_and_workday" and settings.workday_enabled
+  snapshot.overnight_active = scheduled_mode.code == "internet_off" and settings.overnight_enabled
   snapshot.warnings = warnings
   return snapshot
 end
