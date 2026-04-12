@@ -68,7 +68,8 @@ function New-QuietWrtCredential {
     )
 
     if (-not $Password) {
-        $Password = Read-Host -Prompt "Router password for $UserName" -AsSecureString
+        $plainTextPassword = Read-Host -Prompt "Router password for $UserName (visible input)"
+        $Password = ConvertTo-SecureString -String $plainTextPassword -AsPlainText -Force
     }
 
     return [pscredential]::new($UserName, $Password)
@@ -143,6 +144,120 @@ function Disconnect-QuietWrtRouter {
     }
 }
 
+function Get-QuietWrtPlainTextPassword {
+    param(
+        [pscredential]$Credential
+    )
+
+    return $Credential.GetNetworkCredential().Password
+}
+
+function New-QuietWrtConnectionInfo {
+    param(
+        [string]$RouterHost,
+        [int]$RouterPort,
+        [pscredential]$Credential
+    )
+
+    $password = Get-QuietWrtPlainTextPassword -Credential $Credential
+    $authentication = [Renci.SshNet.PasswordAuthenticationMethod]::new($Credential.UserName, $password)
+    $connectionInfo = [Renci.SshNet.ConnectionInfo]::new($RouterHost, $RouterPort, $Credential.UserName, $authentication)
+    $connectionInfo.Timeout = [TimeSpan]::FromSeconds(15)
+    return $connectionInfo
+}
+
+function ConvertTo-QuietWrtRemoteShellLiteral {
+    param(
+        [string]$Text
+    )
+
+    $escaped = $Text.Replace('\', '\\').Replace('"', '\"').Replace('$', '\$').Replace('`', '\`')
+    return '"' + $escaped + '"'
+}
+
+function ConvertTo-QuietWrtNormalizedRemotePath {
+    param(
+        [string]$Path
+    )
+
+    if ($null -eq $Path) {
+        return ''
+    }
+
+    return ($Path -replace '\\', '/').Trim()
+}
+
+function Join-QuietWrtRemotePath {
+    param(
+        [string]$BasePath,
+        [string]$ChildPath
+    )
+
+    $base = ConvertTo-QuietWrtNormalizedRemotePath -Path $BasePath
+    $child = ConvertTo-QuietWrtNormalizedRemotePath -Path $ChildPath
+
+    if ([string]::IsNullOrEmpty($base)) {
+        return $child
+    }
+
+    if ([string]::IsNullOrEmpty($child)) {
+        return $base
+    }
+
+    if ($base -eq '/') {
+        return '/' + $child.TrimStart('/')
+    }
+
+    return $base.TrimEnd('/') + '/' + $child.TrimStart('/')
+}
+
+function Get-QuietWrtRemoteParentPath {
+    param(
+        [string]$Path
+    )
+
+    $normalized = ConvertTo-QuietWrtNormalizedRemotePath -Path $Path
+    if ([string]::IsNullOrEmpty($normalized) -or $normalized -eq '/') {
+        return '/'
+    }
+
+    $trimmed = $normalized.TrimEnd('/')
+    $lastSlash = $trimmed.LastIndexOf('/')
+
+    if ($lastSlash -lt 0) {
+        return ''
+    }
+
+    if ($lastSlash -eq 0) {
+        return '/'
+    }
+
+    return $trimmed.Substring(0, $lastSlash)
+}
+
+function Ensure-QuietWrtRemoteDirectory {
+    param(
+        $Session,
+        [string]$Path
+    )
+
+    $normalized = ConvertTo-QuietWrtNormalizedRemotePath -Path $Path
+    if ([string]::IsNullOrWhiteSpace($normalized) -or $normalized -eq '.' -or $normalized -eq '/') {
+        return
+    }
+
+    $quotedPath = ConvertTo-QuietWrtRemoteShellLiteral -Text $normalized
+    $result = $Session.CommandClient.RunCommand("mkdir -p $quotedPath")
+
+    if ($result.ExitStatus -ne 0) {
+        $errorText = $result.Error
+        if ([string]::IsNullOrWhiteSpace($errorText)) {
+            $errorText = $result.Result
+        }
+        throw "Could not create remote directory $normalized. $errorText".Trim()
+    }
+}
+
 function New-QuietWrtSshSession {
     param(
         [string]$RouterHost,
@@ -150,7 +265,10 @@ function New-QuietWrtSshSession {
         [pscredential]$Credential
     )
 
-    return New-SSHSession -ComputerName $RouterHost -Port $RouterPort -Credential $Credential -AcceptKey -ErrorAction Stop
+    $connectionInfo = New-QuietWrtConnectionInfo -RouterHost $RouterHost -RouterPort $RouterPort -Credential $Credential
+    $client = [Renci.SshNet.SshClient]::new($connectionInfo)
+    $client.Connect()
+    return $client
 }
 
 function New-QuietWrtSftpSession {
@@ -160,7 +278,15 @@ function New-QuietWrtSftpSession {
         [pscredential]$Credential
     )
 
-    return New-SFTPSession -ComputerName $RouterHost -Port $RouterPort -Credential $Credential -AcceptKey -ErrorAction Stop
+    $transferClient = [Renci.SshNet.ScpClient]::new((New-QuietWrtConnectionInfo -RouterHost $RouterHost -RouterPort $RouterPort -Credential $Credential))
+    $commandClient = [Renci.SshNet.SshClient]::new((New-QuietWrtConnectionInfo -RouterHost $RouterHost -RouterPort $RouterPort -Credential $Credential))
+    $transferClient.Connect()
+    $commandClient.Connect()
+
+    return [pscustomobject]@{
+        TransferClient = $transferClient
+        CommandClient = $commandClient
+    }
 }
 
 function Remove-QuietWrtSshSession {
@@ -168,7 +294,15 @@ function Remove-QuietWrtSshSession {
         $Session
     )
 
-    return Remove-SSHSession -SSHSession $Session
+    if (-not $Session) {
+        return
+    }
+
+    if ($Session.IsConnected) {
+        $Session.Disconnect()
+    }
+
+    $Session.Dispose()
 }
 
 function Remove-QuietWrtSftpSession {
@@ -176,7 +310,25 @@ function Remove-QuietWrtSftpSession {
         $Session
     )
 
-    return Remove-SFTPSession -SFTPSession $Session
+    if (-not $Session) {
+        return
+    }
+
+    if ($Session.TransferClient) {
+        if ($Session.TransferClient.IsConnected) {
+            $Session.TransferClient.Disconnect()
+        }
+
+        $Session.TransferClient.Dispose()
+    }
+
+    if ($Session.CommandClient) {
+        if ($Session.CommandClient.IsConnected) {
+            $Session.CommandClient.Disconnect()
+        }
+
+        $Session.CommandClient.Dispose()
+    }
 }
 
 function Invoke-QuietWrtSshCommand {
@@ -186,7 +338,16 @@ function Invoke-QuietWrtSshCommand {
         [int]$TimeoutSeconds
     )
 
-    return Invoke-SSHCommand -SSHSession $Session -Command $Command -TimeOut $TimeoutSeconds -ErrorAction Stop
+    $sshCommand = $Session.CreateCommand($Command)
+    $sshCommand.CommandTimeout = [TimeSpan]::FromSeconds($TimeoutSeconds)
+    $output = $sshCommand.Execute()
+
+    return [pscustomobject]@{
+        ExitStatus = $sshCommand.ExitStatus
+        Output = if ([string]::IsNullOrEmpty($output)) { @() } else { $output -split "`r?`n" }
+        Error = $sshCommand.Error
+        Raw = $sshCommand
+    }
 }
 
 function Send-QuietWrtSftpItem {
@@ -196,7 +357,29 @@ function Send-QuietWrtSftpItem {
         [string]$Destination
     )
 
-    return Set-SFTPItem -SFTPSession $Session -Path $Path -Destination $Destination -Force
+    $item = Get-Item -LiteralPath $Path -ErrorAction Stop
+
+    if ($item.PSIsContainer) {
+        $remoteRoot = Join-QuietWrtRemotePath -BasePath $Destination -ChildPath $item.Name
+        Ensure-QuietWrtRemoteDirectory -Session $Session -Path $remoteRoot
+
+        foreach ($child in Get-ChildItem -LiteralPath $item.FullName -File -Recurse) {
+            $relativePath = $child.FullName.Substring($item.FullName.Length).TrimStart('\', '/')
+            $remotePath = Join-QuietWrtRemotePath -BasePath $remoteRoot -ChildPath ($relativePath -replace '\\', '/')
+            $remoteParent = Get-QuietWrtRemoteParentPath -Path $remotePath
+            Ensure-QuietWrtRemoteDirectory -Session $Session -Path $remoteParent
+
+            $Session.TransferClient.Upload($child, $remotePath)
+        }
+
+        return $remoteRoot
+    }
+
+    Ensure-QuietWrtRemoteDirectory -Session $Session -Path $Destination
+    $remoteFilePath = Join-QuietWrtRemotePath -BasePath $Destination -ChildPath $item.Name
+    $Session.TransferClient.Upload($item, $remoteFilePath)
+
+    return $remoteFilePath
 }
 
 function Receive-QuietWrtSftpItem {
@@ -206,7 +389,24 @@ function Receive-QuietWrtSftpItem {
         [string]$Destination
     )
 
-    return Get-SFTPItem -SFTPSession $Session -Path $Path -Destination $Destination -Force
+    $remotePath = ($Path -replace '\\', '/')
+    $itemName = [System.IO.Path]::GetFileName($remotePath)
+    $destinationIsDirectory = (Test-Path -LiteralPath $Destination -PathType Container)
+    $localPath = if ($destinationIsDirectory) { Join-Path $Destination $itemName } else { $Destination }
+    $localDirectory = Split-Path -Parent $localPath
+
+    if (-not [string]::IsNullOrWhiteSpace($localDirectory)) {
+        $null = New-Item -ItemType Directory -Path $localDirectory -Force
+    }
+
+    $stream = [System.IO.File]::Create($localPath)
+    try {
+        $Session.TransferClient.Download($remotePath, $stream)
+    } finally {
+        $stream.Dispose()
+    }
+
+    return $localPath
 }
 
 function Invoke-QuietWrtRemote {
@@ -222,6 +422,10 @@ function Invoke-QuietWrtRemote {
 
     if ($null -ne $result.Output) {
         $output = (($result.Output | ForEach-Object { $_.ToString() }) -join "`n").Trim()
+    }
+
+    if ([string]::IsNullOrWhiteSpace($output) -and $null -ne $result.Error) {
+        $output = $result.Error.ToString().Trim()
     }
 
     if (-not $AllowFailure -and $result.ExitStatus -ne 0) {

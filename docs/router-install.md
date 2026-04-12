@@ -72,7 +72,7 @@ If `AdGuard Home` protection is disabled, install now fails closed instead of re
 
 ## 4. Daily Control Menu
 
-The local CLI keeps one SSH session and one SFTP session open and offers:
+The local CLI keeps one SSH session plus an SCP-backed file transfer connection open and offers:
 
 ```text
 1. Install/Update QuietWrt
