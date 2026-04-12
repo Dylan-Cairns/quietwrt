@@ -43,29 +43,29 @@ local function render_chip(label, tone)
   return '<span class="chip ' .. util.html_escape(tone or "unknown") .. '">' .. util.html_escape(label or "Unknown") .. "</span>"
 end
 
-local function render_status_row(label, chips)
+local function render_status_text(value)
+  return '<span class="status-text">' .. util.html_escape(value or "Unknown") .. "</span>"
+end
+
+local function render_status_item(label, values, detail)
   local parts = {
-    '<div class="status-row"><div class="status-label">',
+    '<div class="status-item"><div class="status-top"><div class="status-label">',
     util.html_escape(label),
     '</div><div class="status-values">',
   }
 
-  for _, chip in ipairs(chips or {}) do
-    table.insert(parts, chip)
+  for _, value in ipairs(values or {}) do
+    table.insert(parts, value)
   end
 
   table.insert(parts, "</div></div>")
-  return table.concat(parts)
-end
 
-local function render_status_text_row(label, value)
-  return table.concat({
-    '<div class="status-row"><div class="status-label">',
-    util.html_escape(label),
-    '</div><div class="status-values"><span class="status-text">',
-    util.html_escape(value or "Unknown"),
-    "</span></div></div>",
-  })
+  if detail and detail ~= "" then
+    table.insert(parts, '<div class="status-detail">' .. detail .. "</div>")
+  end
+
+  table.insert(parts, "</div>")
+  return table.concat(parts)
 end
 
 local function render_enabled_chip(enabled)
@@ -140,8 +140,6 @@ function M.render_page(script_name, state)
   write(".shell{max-width:1180px;margin:0 auto;padding:2rem 1rem 3rem;}")
   write("h1{margin:0;font-size:2rem;line-height:1.1;}")
   write("p{margin:0;line-height:1.6;color:var(--muted);}")
-  write(".intro{margin-top:0.85rem;max-width:74rem;display:grid;gap:0.35rem;}")
-  write(".intro-line{color:var(--muted);}")
   write(".panel{margin-top:1rem;padding:1.15rem 1.2rem;border-radius:18px;border:1px solid var(--edge);background:linear-gradient(180deg,rgba(255,255,255,0.02),rgba(255,255,255,0)),var(--panel);box-shadow:var(--shadow);}")
   write(".section-title{display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-wrap:wrap;margin-bottom:0.35rem;}")
   write(".section-title h2,.section-title h3{margin:0;font-size:1.08rem;}")
@@ -151,11 +149,13 @@ function M.render_page(script_name, state)
   write(".banner.error{background:rgba(255,85,85,0.12);border:1px solid rgba(255,85,85,0.28);}")
   write(".banner.info{background:rgba(139,233,253,0.12);border:1px solid rgba(139,233,253,0.28);}")
   write(".status-list{display:grid;gap:0.2rem;}")
-  write(".status-row{display:grid;grid-template-columns:minmax(12rem,14rem) 1fr;gap:1rem;align-items:center;padding:0.8rem 0;border-top:1px solid rgba(255,255,255,0.06);}")
-  write(".status-row:first-child{border-top:none;padding-top:0.2rem;}")
+  write(".status-item{padding:0.8rem 0;border-top:1px solid rgba(255,255,255,0.06);}")
+  write(".status-item:first-child{border-top:none;padding-top:0.2rem;}")
+  write(".status-top{display:flex;justify-content:space-between;gap:1rem;align-items:center;flex-wrap:wrap;}")
   write(".status-label{font-weight:700;color:var(--text);}")
   write(".status-values{display:flex;gap:0.55rem;flex-wrap:wrap;align-items:center;}")
   write(".status-text{font-size:1rem;font-weight:700;color:var(--cyan);}")
+  write(".status-detail{margin-top:0.45rem;color:var(--muted);}")
   write(".chip{display:inline-flex;align-items:center;justify-content:center;min-height:2.05rem;padding:0.35rem 0.8rem;border-radius:999px;border:1px solid var(--edge-strong);background:rgba(98,114,164,0.12);font-size:0.92rem;font-weight:700;}")
   write(".chip.enabled{background:rgba(80,250,123,0.12);border-color:rgba(80,250,123,0.34);color:var(--green);}")
   write(".chip.disabled{background:rgba(189,147,249,0.12);border-color:rgba(189,147,249,0.34);color:var(--purple);}")
@@ -181,32 +181,28 @@ function M.render_page(script_name, state)
   write(".rule-line + .rule-line{margin-top:0.3rem;border-top:1px solid rgba(255,255,255,0.03);padding-top:0.75rem;}")
   write(".empty-state{padding:1rem 0.8rem;color:var(--muted);font-style:italic;}")
   write("code{background:rgba(255,255,255,0.08);padding:0.12rem 0.38rem;border-radius:6px;color:var(--yellow);}")
-  write("@media (max-width:760px){.shell{padding-top:1.3rem;}.status-row{grid-template-columns:1fr;gap:0.55rem;}.action-row{grid-template-columns:1fr;}.action-row .button-wrap{display:block;}.rule-list{max-height:20rem;}}")
+  write("@media (max-width:760px){.shell{padding-top:1.3rem;}.status-top{align-items:flex-start;}.action-row{grid-template-columns:1fr;}.action-row .button-wrap{display:block;}.rule-list{max-height:20rem;}}")
   write("</style>\n")
   write("</head>\n")
   write("<body>\n")
   write("<div class=\"shell\">\n")
   write("<h1>QuietWrt Blocklists</h1>\n")
-  write("<div class=\"intro\">\n")
-  write("<p class=\"intro-line\"><strong>Always blocked:</strong> active whenever internet is available.</p>\n")
-  write("<p class=\"intro-line\"><strong>Workday blocked:</strong> active from ", render_code("04:00"), " until ", render_code("16:30"), ".</p>\n")
-  write("<p class=\"intro-line\"><strong>Overnight lockout:</strong> internet access is fully blocked from ", render_code("18:30"), " until ", render_code("04:00"), ".</p>\n")
-  write("</div>\n")
   write("<section class=\"panel\">\n")
-  write("<div class=\"section-title\"><h2>Current router status</h2></div>\n")
   write("<div class=\"status-list\">\n")
-  write(render_status_text_row("Router time", state.router_time or "Unknown"), "\n")
-  write(render_status_row("Always blocklist", {
-    render_enabled_chip(settings.always_enabled),
+  write(render_status_item("Router time", {
+    render_status_text(state.router_time or "Unknown"),
   }), "\n")
-  write(render_status_row("Workday blocklist", {
+  write(render_status_item("Always blocklist", {
+    render_enabled_chip(settings.always_enabled),
+  }, "Active whenever internet is available."), "\n")
+  write(render_status_item("Workday blocklist", {
     render_enabled_chip(settings.workday_enabled),
     render_activity_chip(settings.workday_enabled, state.workday_active),
-  }), "\n")
-  write(render_status_row("Overnight lockout", {
+  }, "Active from " .. render_code("04:00") .. " until " .. render_code("16:30") .. "."), "\n")
+  write(render_status_item("Overnight lockout", {
     render_enabled_chip(settings.overnight_enabled),
     render_activity_chip(settings.overnight_enabled, state.overnight_active),
-  }), "\n")
+  }, "Internet access is fully blocked from " .. render_code("18:30") .. " until " .. render_code("04:00") .. "."), "\n")
   write("</div>\n")
   write("</section>\n")
 
