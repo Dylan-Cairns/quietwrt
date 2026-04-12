@@ -7,7 +7,7 @@ It keeps two canonical blocklists on the router:
 - `always blocked`
 - `workday blocked`
 
-It also enforces a nightly curfew by blocking `LAN -> WAN` traffic from `18:30` to `04:00`.
+It can also enforce a nightly curfew by blocking `LAN -> WAN` traffic from `18:30` to `04:00` when overnight blocking is enabled.
 
 ## Schedule
 
@@ -24,6 +24,12 @@ It also enforces a nightly curfew by blocking `LAN -> WAN` traffic from `18:30` 
 - a boot-time sync plus recurring sync jobs keep policy aligned after reboot and across schedule transitions
 - a small LAN page can append new entries to either list
 - a Windows PowerShell CLI installs, updates, toggles, backs up, and restores QuietWrt over SSH
+
+Fresh installs default to:
+
+- `always`: enabled
+- `workday`: enabled
+- `overnight`: disabled
 
 ## Run It
 

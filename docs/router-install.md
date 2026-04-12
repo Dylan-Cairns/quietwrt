@@ -68,6 +68,14 @@ It then:
 - installs or refreshes the managed firewall sections
 - applies the current mode immediately
 
+Fresh installs currently default to:
+
+- `always`: enabled
+- `workday`: enabled
+- `overnight`: disabled
+
+This keeps the nighttime curfew off until you explicitly enable it after confirming the rest of the install behaves as expected.
+
 If `AdGuard Home` protection is disabled, install now fails closed instead of reporting a healthy QuietWrt install.
 
 ## 4. Daily Control Menu

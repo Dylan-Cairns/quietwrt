@@ -40,6 +40,7 @@ local function default_paths()
   local data_dir = "/etc/quietwrt"
   return {
     config_path = "/etc/AdGuardHome/config.yaml",
+    settings_config_path = "/etc/config/quietwrt",
     data_dir = data_dir,
     always_list_path = data_dir .. "/always-blocked.txt",
     workday_list_path = data_dir .. "/workday-blocked.txt",
@@ -54,7 +55,7 @@ local function default_paths()
     disable_init_service_command = "/etc/init.d/quietwrt disable >/tmp/quietwrt-init-disable.log 2>&1",
     init_service_enabled_path = "/etc/rc.d/S99quietwrt",
     restart_cron_command = "/etc/init.d/cron restart >/tmp/quietwrt-cron-restart.log 2>&1",
-    restart_firewall_command = "service firewall restart >/tmp/quietwrt-firewall-restart.log 2>&1",
+    restart_firewall_command = "/etc/init.d/firewall restart >/tmp/quietwrt-firewall-restart.log 2>&1",
   }
 end
 
@@ -362,9 +363,16 @@ local function read_settings(env, fallback_enabled)
   }
 end
 
-local function write_settings(env, settings, schema_version)
+local function write_settings(env, paths, settings, schema_version)
+  if not env.file_exists(paths.settings_config_path) then
+    local created = env.write_file(paths.settings_config_path, "")
+    if not created then
+      return false, "write " .. paths.settings_config_path
+    end
+  end
+
   local commands = {
-    "uci -q delete quietwrt.settings",
+    "uci -q delete quietwrt.settings >/dev/null 2>&1 || true",
     "uci set quietwrt.settings='settings'",
     "uci set quietwrt.settings.always_enabled='" .. bool_to_uci(settings.always_enabled) .. "'",
     "uci set quietwrt.settings.workday_enabled='" .. bool_to_uci(settings.workday_enabled) .. "'",
@@ -411,8 +419,8 @@ local function resolve_settings(env, paths, settings, options)
   return desired
 end
 
-local function persist_settings(env, settings)
-  local ok, failed_command = write_settings(env, settings, settings and settings.schema_version or nil)
+local function persist_settings(env, paths, settings)
+  local ok, failed_command = write_settings(env, paths, settings, settings and settings.schema_version or nil)
   if ok then
     return true, settings
   end
@@ -422,7 +430,7 @@ end
 
 local function ensure_settings(env, paths, settings, options)
   local desired = resolve_settings(env, paths, settings, options)
-  return persist_settings(env, desired)
+  return persist_settings(env, paths, desired)
 end
 
 local function build_active_hosts(lists, settings, scheduled_mode)
@@ -617,7 +625,7 @@ local function build_firewall_commands(snapshot, paths)
   local commands = {}
 
   for _, section_name in ipairs(MANAGED_FIREWALL_SECTIONS) do
-    table.insert(commands, "uci -q delete firewall." .. section_name)
+    table.insert(commands, "uci -q delete firewall." .. section_name .. " >/dev/null 2>&1 || true")
   end
 
   for _, section_name in ipairs(MANAGED_FIREWALL_SECTIONS) do
@@ -1218,7 +1226,7 @@ function M.install(context)
   local desired_settings_input = install_state.installed and {} or {
     always_enabled = true,
     workday_enabled = true,
-    overnight_enabled = true,
+    overnight_enabled = false,
   }
   local staged_settings = resolve_settings(context.env, context.paths, desired_settings_input, {
     schema_version = QUIETWRT_SCHEMA_VERSION,
@@ -1260,7 +1268,7 @@ function M.install(context)
   end
   rollback_state.applied = true
 
-  local settings_ok, settings_result = persist_settings(context.env, staged_settings)
+  local settings_ok, settings_result = persist_settings(context.env, context.paths, staged_settings)
   if not settings_ok then
     local rollback_errors = rollback_install(context, rollback_state)
     return false, append_rollback_errors(settings_result, rollback_errors)

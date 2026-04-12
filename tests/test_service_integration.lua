@@ -23,7 +23,7 @@ function TestServiceIntegration:test_install_bootstraps_lists_and_marks_the_inst
   local ok, result = service.install(context)
   lu.assertTrue(ok)
   lu.assertTrue(result.bootstrapped)
-  lu.assertEquals(result.mode.code, "internet_off")
+  lu.assertEquals(result.mode.code, "disabled_overnight")
   lu.assertEquals(helper.read_file(fixture.paths.always_list_path), "example.com\n")
   lu.assertEquals(helper.read_file(fixture.paths.workday_list_path), "")
   lu.assertEquals(helper.read_file(fixture.paths.passthrough_rules_path), "@@||allowed.com^\n")
@@ -35,7 +35,7 @@ function TestServiceIntegration:test_install_bootstraps_lists_and_marks_the_inst
   local joined = table.concat(fixture.commands, "\n")
   lu.assertStrContains(joined, "uci set quietwrt.settings.schema_version='1'")
   lu.assertStrContains(joined, "enable-init-service")
-  lu.assertStrContains(joined, "uci set firewall.quietwrt_curfew.enabled='1'")
+  lu.assertStrContains(joined, "uci set firewall.quietwrt_curfew.enabled='0'")
   fixture.cleanup()
 end
 
@@ -226,6 +226,69 @@ function TestServiceIntegration:test_install_rolls_back_bootstrapped_lists_sched
   local joined = table.concat(fixture.commands, "\n")
   lu.assertStrContains(joined, "enable-init-service")
   lu.assertStrContains(joined, "disable-init-service")
+  fixture.cleanup()
+end
+
+function TestServiceIntegration:test_install_tolerates_missing_managed_firewall_sections_when_deleting_first()
+  local fixture = helper.make_context({
+    execute = function(log, command)
+      table.insert(log, command)
+      if command:match("^uci %-q delete firewall%.quietwrt_[%w_]+$") then
+        return 1
+      end
+      return 0
+    end,
+  })
+
+  helper.write_config(fixture.paths.config_path, {
+    "||example.com^",
+  })
+
+  local context = service.new_context({
+    env = fixture.env,
+    paths = fixture.paths,
+  })
+
+  local ok, result = service.install(context)
+  lu.assertTrue(ok)
+  lu.assertEquals(result.mode.code, "always_and_workday")
+
+  local joined = table.concat(fixture.commands, "\n")
+  lu.assertStrContains(joined, "uci -q delete firewall.quietwrt_dns_int >/dev/null 2>&1 || true")
+  lu.assertStrContains(joined, "uci set firewall.quietwrt_dns_int='redirect'")
+  fixture.cleanup()
+end
+
+function TestServiceIntegration:test_install_tolerates_missing_quietwrt_settings_section_when_writing_first_settings()
+  local fixture = helper.make_context()
+  fixture.env.execute = function(command)
+    table.insert(fixture.commands, command)
+    if command == "uci -q delete quietwrt.settings" then
+      return 1
+    end
+    if command == "uci set quietwrt.settings='settings'" and not helper.path_exists(fixture.paths.settings_config_path) then
+      return 1
+    end
+    return 0
+  end
+
+  helper.write_config(fixture.paths.config_path, {
+    "||example.com^",
+  })
+
+  local context = service.new_context({
+    env = fixture.env,
+    paths = fixture.paths,
+  })
+
+  local ok, result = service.install(context)
+  lu.assertTrue(ok)
+  lu.assertEquals(result.settings.overnight_enabled, false)
+  lu.assertEquals(helper.read_file(fixture.paths.settings_config_path), "")
+
+  local joined = table.concat(fixture.commands, "\n")
+  lu.assertStrContains(joined, "uci -q delete quietwrt.settings >/dev/null 2>&1 || true")
+  lu.assertStrContains(joined, "uci set quietwrt.settings='settings'")
   fixture.cleanup()
 end
 

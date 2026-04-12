@@ -101,6 +101,7 @@ function M.make_context(overrides)
   local data_dir = M.join_path(root, "quietwrt-data")
   local paths = {
     config_path = M.join_path(root, "AdGuardHome.yaml"),
+    settings_config_path = M.join_path(root, "etc", "config", "quietwrt"),
     data_dir = data_dir,
     always_list_path = M.join_path(data_dir, "always-blocked.txt"),
     workday_list_path = M.join_path(data_dir, "workday-blocked.txt"),
@@ -121,6 +122,7 @@ function M.make_context(overrides)
   assert(M.create_dir(data_dir), "failed to create fixture data dir " .. data_dir)
   assert(M.create_dir(M.join_path(root, "www", "cgi-bin")), "failed to create fixture cgi dir")
   assert(M.create_dir(M.join_path(root, "usr", "lib", "lua", "quietwrt")), "failed to create fixture module dir")
+  assert(M.create_dir(M.join_path(root, "etc", "config")), "failed to create fixture etc/config dir")
   assert(M.create_dir(M.join_path(root, "etc", "init.d")), "failed to create fixture init.d dir")
   assert(M.create_dir(M.join_path(root, "etc", "rc.d")), "failed to create fixture rc.d dir")
 

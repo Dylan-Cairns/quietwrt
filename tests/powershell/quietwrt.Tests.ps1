@@ -20,13 +20,13 @@ Describe 'QuietWrt PowerShell CLI' {
     }
 
     It 'prompts for the router password using visible input when none is supplied' {
-        Mock Read-Host { 'pasted-secret' } -ParameterFilter { $Prompt -eq 'Router password for root (visible input)' }
+        Mock Read-Host { 'pasted-secret' } -ParameterFilter { $Prompt -eq 'Router password for root' }
 
         $credential = New-QuietWrtCredential -UserName 'root'
 
         $credential.UserName | Should Be 'root'
         $credential.GetNetworkCredential().Password | Should Be 'pasted-secret'
-        Assert-MockCalled Read-Host -Times 1 -Exactly -ParameterFilter { $Prompt -eq 'Router password for root (visible input)' }
+        Assert-MockCalled Read-Host -Times 1 -Exactly -ParameterFilter { $Prompt -eq 'Router password for root' }
     }
 
     It 'returns a not-installed placeholder when quietwrtctl is absent' {

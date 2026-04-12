@@ -68,7 +68,7 @@ function New-QuietWrtCredential {
     )
 
     if (-not $Password) {
-        $plainTextPassword = Read-Host -Prompt "Router password for $UserName (visible input)"
+        $plainTextPassword = Read-Host -Prompt "Router password for $UserName"
         $Password = ConvertTo-SecureString -String $plainTextPassword -AsPlainText -Force
     }
 
