@@ -871,6 +871,123 @@ function TestServiceIntegration:test_import_blocklists_archive_merges_without_re
   fixture.cleanup()
 end
 
+function TestServiceIntegration:test_restore_lists_rejects_backup_conflicting_with_existing_always_list()
+  local fixture = installed_fixture()
+
+  helper.write_config(fixture.paths.config_path, {})
+  helper.write_file(fixture.paths.always_list_path, "always.example\n")
+  helper.write_file(fixture.paths.workday_list_path, "work.example\n")
+  helper.write_file(fixture.paths.after_work_list_path, "")
+  helper.write_file(fixture.paths.password_vault_list_path, "")
+  helper.write_file(fixture.paths.passthrough_rules_path, "")
+
+  local restore_path = helper.join_path(fixture.root, "restore-workday.txt")
+  helper.write_file(restore_path, "always.example\n")
+
+  local context = service.new_context({
+    env = fixture.env,
+    paths = fixture.paths,
+  })
+
+  local ok, err = service.restore_lists(context, {
+    workday_path = restore_path,
+  })
+  lu.assertFalse(ok)
+  lu.assertStrContains(err, "always.example")
+  lu.assertEquals(helper.read_file(fixture.paths.workday_list_path), "work.example\n")
+  fixture.cleanup()
+end
+
+function TestServiceIntegration:test_restore_lists_rejects_backup_conflicting_across_scheduled_lists()
+  local fixture = installed_fixture()
+
+  helper.write_config(fixture.paths.config_path, {})
+  helper.write_file(fixture.paths.always_list_path, "")
+  helper.write_file(fixture.paths.workday_list_path, "shared.example\n")
+  helper.write_file(fixture.paths.after_work_list_path, "")
+  helper.write_file(fixture.paths.password_vault_list_path, "")
+  helper.write_file(fixture.paths.passthrough_rules_path, "")
+
+  local restore_path = helper.join_path(fixture.root, "restore-after-work.txt")
+  helper.write_file(restore_path, "shared.example\n")
+
+  local context = service.new_context({
+    env = fixture.env,
+    paths = fixture.paths,
+  })
+
+  local ok, err = service.restore_lists(context, {
+    after_work_path = restore_path,
+  })
+  lu.assertFalse(ok)
+  lu.assertStrContains(err, "shared.example")
+  lu.assertEquals(helper.read_file(fixture.paths.after_work_list_path), "")
+  fixture.cleanup()
+end
+
+function TestServiceIntegration:test_import_blocklists_archive_rejects_archive_with_cross_list_conflict()
+  local fixture = installed_fixture()
+
+  helper.write_config(fixture.paths.config_path, {})
+  helper.write_file(fixture.paths.always_list_path, "")
+  helper.write_file(fixture.paths.workday_list_path, "")
+  helper.write_file(fixture.paths.after_work_list_path, "")
+  helper.write_file(fixture.paths.password_vault_list_path, "")
+  helper.write_file(fixture.paths.passthrough_rules_path, "")
+
+  local zip = assert(archive.zip({
+    {
+      name = "always-blocked.txt",
+      content = "conflict.example\n",
+    },
+    {
+      name = "workday-blocked.txt",
+      content = "conflict.example\n",
+    },
+  }))
+
+  local context = service.new_context({
+    env = fixture.env,
+    paths = fixture.paths,
+  })
+
+  local ok, err = service.import_blocklists_archive(context, zip)
+  lu.assertFalse(ok)
+  lu.assertStrContains(err, "conflict.example")
+  lu.assertEquals(helper.read_file(fixture.paths.always_list_path), "")
+  lu.assertEquals(helper.read_file(fixture.paths.workday_list_path), "")
+  fixture.cleanup()
+end
+
+function TestServiceIntegration:test_import_blocklists_archive_rejects_archive_conflicting_with_existing_list()
+  local fixture = installed_fixture()
+
+  helper.write_config(fixture.paths.config_path, {})
+  helper.write_file(fixture.paths.always_list_path, "existing.example\n")
+  helper.write_file(fixture.paths.workday_list_path, "")
+  helper.write_file(fixture.paths.after_work_list_path, "")
+  helper.write_file(fixture.paths.password_vault_list_path, "")
+  helper.write_file(fixture.paths.passthrough_rules_path, "")
+
+  local zip = assert(archive.zip({
+    {
+      name = "workday-blocked.txt",
+      content = "existing.example\n",
+    },
+  }))
+
+  local context = service.new_context({
+    env = fixture.env,
+    paths = fixture.paths,
+  })
+
+  local ok, err = service.import_blocklists_archive(context, zip)
+  lu.assertFalse(ok)
+  lu.assertStrContains(err, "existing.example")
+  lu.assertEquals(helper.read_file(fixture.paths.workday_list_path), "")
+  fixture.cleanup()
+end
+
 function TestServiceIntegration:test_import_blocklists_archive_rejects_unexpected_files()
   local fixture = installed_fixture()
 

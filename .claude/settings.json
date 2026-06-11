@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//c//**)",
+      "PowerShell(Get-ChildItem \"c:\\\\Users\\\\dcairns\\\\Documents\\\\src\\\\quietwrt\\\\tools\" -Recurse | Where-Object { $_.Name -match \"test|run\" } | Select-Object FullName)",
+      "PowerShell($appdata = $env:APPDATA; Get-ChildItem \"$appdata\\\\luarocks\" -ErrorAction SilentlyContinue | Select-Object -First 5 FullName; Get-ChildItem \"C:\\\\LuaRocks\", \"C:\\\\Lua\", \"C:\\\\lua\" -ErrorAction SilentlyContinue | Select-Object -First 5 FullName)",
+      "PowerShell(Get-ChildItem \"C:\\\\Program Files\\\\Lua\", \"C:\\\\ProgramData\\\\Lua\", \"C:\\\\dev\" -ErrorAction SilentlyContinue | Select-Object -First 10 FullName; [System.Environment]::GetEnvironmentVariable\\(\"Path\", \"User\"\\) -split \";\" | Where-Object { $_ -match \"lua\" })",
+      "PowerShell(cmd /c \"where lua 2>&1\")",
+      "PowerShell(cmd /c \"where lua53 2>&1\")",
+      "PowerShell(cmd /c \"where lua5.3 2>&1\")",
+      "PowerShell($env:PATH = [System.Environment]::GetEnvironmentVariable\\(\"Path\",\"User\"\\) + \";\" + [System.Environment]::GetEnvironmentVariable\\(\"Path\",\"Machine\"\\); cd \"c:\\\\Users\\\\dcairns\\\\Documents\\\\src\\\\quietwrt\"; lua tests\\\\run.lua 2>&1)",
+      "PowerShell($env:PATH = [System.Environment]::GetEnvironmentVariable\\(\"Path\",\"User\"\\) + \";\" + [System.Environment]::GetEnvironmentVariable\\(\"Path\",\"Machine\"\\); scoop install luarocks 2>&1)",
+      "PowerShell($env:PATH = [System.Environment]::GetEnvironmentVariable\\(\"Path\",\"User\"\\) + \";\" + [System.Environment]::GetEnvironmentVariable\\(\"Path\",\"Machine\"\\); luarocks install luaunit 2>&1)",
+      "PowerShell($env:PATH = [System.Environment]::GetEnvironmentVariable\\(\"Path\",\"User\"\\) + \";\" + [System.Environment]::GetEnvironmentVariable\\(\"Path\",\"Machine\"\\); $lua = \\(Get-Command lua\\).Source; luarocks --local config variables.LUA \"$lua\" 2>&1; luarocks --local install luaunit 2>&1)"
+    ]
+  }
+}

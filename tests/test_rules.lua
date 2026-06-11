@@ -99,3 +99,44 @@ function TestRules:test_load_rules_file_rejects_block_rules()
   lu.assertNil(parsed)
   lu.assertStrContains(err, "passthrough")
 end
+
+function TestRules:test_validate_lists_passes_for_clean_lists()
+  local ok, err = rules.validate_lists(
+    { "always.com" },
+    { workday = { "work.com" }, after_work = {}, password_vault = {} }
+  )
+  lu.assertTrue(ok)
+  lu.assertNil(err)
+end
+
+function TestRules:test_validate_lists_rejects_host_in_always_and_workday()
+  local ok, err = rules.validate_lists(
+    { "example.com" },
+    { workday = { "example.com" }, after_work = {}, password_vault = {} }
+  )
+  lu.assertFalse(ok)
+  lu.assertStrContains(err, "example.com")
+  lu.assertStrContains(err, "Always blocked")
+  lu.assertStrContains(err, "Workday blocked")
+end
+
+function TestRules:test_validate_lists_rejects_host_in_always_and_after_work()
+  local ok, err = rules.validate_lists(
+    { "example.com" },
+    { workday = {}, after_work = { "example.com" }, password_vault = {} }
+  )
+  lu.assertFalse(ok)
+  lu.assertStrContains(err, "example.com")
+  lu.assertStrContains(err, "After work blocked")
+end
+
+function TestRules:test_validate_lists_rejects_host_in_multiple_scheduled_lists()
+  local ok, err = rules.validate_lists(
+    {},
+    { workday = { "example.com" }, after_work = { "example.com" }, password_vault = {} }
+  )
+  lu.assertFalse(ok)
+  lu.assertStrContains(err, "example.com")
+  lu.assertStrContains(err, "Workday blocked")
+  lu.assertStrContains(err, "After work blocked")
+end

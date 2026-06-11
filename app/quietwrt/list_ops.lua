@@ -200,6 +200,16 @@ function M.restore_lists(context, restore_paths)
     return false, "Provide at least one restore file."
   end
 
+  local effective = {}
+  for _, definition in ipairs(schema.HOST_LISTS) do
+    effective[definition.key] = replacements[definition.key] or current_lists[definition.key]
+  end
+
+  local valid, validation_error = rules.validate_lists(effective.always_hosts, scheduled_lists(effective))
+  if not valid then
+    return false, validation_error
+  end
+
   local previous_lists = lists_store.clone(current_lists)
   local saved, save_error = lists_store.persist_selected(context, replacements)
   if not saved then
@@ -303,6 +313,11 @@ function M.import_blocklists_archive(context, content)
 
   if selected_count == 0 then
     return false, "ZIP archive does not contain any QuietWrt blocklist files."
+  end
+
+  local valid, validation_error = rules.validate_lists(merged_lists.always_hosts, scheduled_lists(merged_lists))
+  if not valid then
+    return false, validation_error
   end
 
   local previous_lists = lists_store.clone(current_lists)

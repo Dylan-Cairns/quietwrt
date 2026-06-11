@@ -362,6 +362,7 @@ function Invoke-QuietWrtRemote {
         [switch]$AllowFailure
     )
 
+    $Command = $Command -replace "`r`n", "`n"
     $result = @(Invoke-QuietWrtSshCommand -Session $Connection.SshSession -Command $Command -TimeoutSeconds $TimeoutSeconds)[0]
     $output = ''
 

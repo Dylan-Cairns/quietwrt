@@ -9,6 +9,7 @@ local package_parts = {
 
 if appdata ~= "" then
   table.insert(package_parts, appdata .. "/luarocks/share/lua/5.3/?.lua")
+  table.insert(package_parts, appdata .. "/luarocks/share/lua/5.4/?.lua")
 end
 
 table.insert(package_parts, package.path)

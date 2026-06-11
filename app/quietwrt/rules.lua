@@ -277,6 +277,35 @@ function M.compile_active_rules(always_hosts, scheduled_hosts, passthrough_rules
   return compiled
 end
 
+function M.validate_lists(always_hosts, scheduled_lists)
+  local always_set = {}
+  for _, host in ipairs(always_hosts or {}) do
+    always_set[host] = true
+  end
+
+  for _, name in ipairs(SCHEDULED_DESTINATIONS) do
+    for _, host in ipairs(scheduled_lists[name] or {}) do
+      if always_set[host] then
+        return false,
+          host .. " appears in both Always blocked and " .. destination_label(name) .. "."
+      end
+    end
+  end
+
+  local seen_in = {}
+  for _, name in ipairs(SCHEDULED_DESTINATIONS) do
+    for _, host in ipairs(scheduled_lists[name] or {}) do
+      if seen_in[host] then
+        return false,
+          host .. " appears in both " .. destination_label(seen_in[host]) .. " and " .. destination_label(name) .. "."
+      end
+      seen_in[host] = name
+    end
+  end
+
+  return true, nil
+end
+
 function M.apply_addition(always_hosts, scheduled_lists, destination, raw_value)
   local host, normalize_error = M.normalize_host_input(raw_value)
   if not host then
