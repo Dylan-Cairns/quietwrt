@@ -40,8 +40,13 @@ local function capture_cgi(env, options)
 end
 
 local function installed_capture_map()
-  return {
-    ["uci -q get quietwrt.settings.schema_version"] = "4",
+  local capture = {}
+  for command, value in pairs(helper.PLATFORM_CAPTURE) do
+    capture[command] = value
+  end
+
+  local installed = {
+    ["uci -q get quietwrt.settings.schema_version"] = "5",
     ["uci -q get quietwrt.settings.always_enabled"] = "1",
     ["uci -q get quietwrt.settings.workday_enabled"] = "1",
     ["uci -q get quietwrt.settings.after_work_enabled"] = "1",
@@ -57,6 +62,10 @@ local function installed_capture_map()
     ["uci -q get quietwrt.settings.overnight_start"] = "1900",
     ["uci -q get quietwrt.settings.overnight_end"] = "0400",
   }
+  for command, value in pairs(installed) do
+    capture[command] = value
+  end
+  return capture
 end
 
 local function mutable_installed_fixture(overrides)
@@ -88,7 +97,7 @@ end
 function TestApp:test_get_download_zip_returns_attachment()
   local fixture = helper.make_context({
     capture_map = {
-      ["uci -q get quietwrt.settings.schema_version"] = "4",
+      ["uci -q get quietwrt.settings.schema_version"] = "5",
     },
   })
 

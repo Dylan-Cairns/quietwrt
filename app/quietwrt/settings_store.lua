@@ -81,8 +81,12 @@ end
 
 function M.read_install_state(context)
   local schema_version = util.trim(context.env.capture("uci -q get quietwrt.settings.schema_version") or "")
+  local installed = schema_version == schema.SCHEMA_VERSION
+  local upgradable = schema.UPGRADABLE_SCHEMA_VERSIONS[schema_version] == true
   return {
-    installed = schema_version == schema.SCHEMA_VERSION,
+    installed = installed,
+    upgradable = upgradable,
+    managed = installed or upgradable,
     schema_version = schema_version ~= "" and schema_version or nil,
     settings_path_present = context.env.file_exists(context.paths.settings_config_path),
   }

@@ -115,7 +115,7 @@ function TestView:test_render_page_uses_dracula_status_rows_and_non_editable_rul
   lu.assertStrContains(html, "Active from <code>04:00</code> until <code>16:30</code>.")
   lu.assertStrContains(html, "Active from <code>16:30</code> until <code>19:00</code>.")
   lu.assertStrContains(html, "Active from <code>09:45</code> until <code>09:30</code> (overnight).")
-  lu.assertStrContains(html, "Internet access is fully blocked from <code>19:00</code> until <code>04:00</code> (overnight).")
+  lu.assertStrContains(html, "Wired LAN internet access is blocked from <code>19:00</code> until <code>04:00</code> (overnight); Wi-Fi clients remain online.")
   lu.assertEquals(count_occurrences(html, "Enabled"), 4)
   lu.assertStrContains(html, '<span class="chip disabled">Disabled</span>')
   lu.assertEquals(count_occurrences(html, 'name="action" value="enable_toggle"'), 2)

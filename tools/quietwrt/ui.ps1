@@ -49,7 +49,8 @@ function Show-QuietWrtStatus {
     Write-Host "  Active rules: $($Status.active_rule_count)"
     Write-Host "  DNS intercept hardening: $(if ($Status.hardening.dns_intercept) { 'yes' } else { 'no' })"
     Write-Host "  DoT blocking hardening: $(if ($Status.hardening.dot_block) { 'yes' } else { 'no' })"
-    Write-Host "  Overnight firewall rule present: $(if ($Status.hardening.overnight_rule) { 'yes' } else { 'no' })"
+    Write-Host "  Wired curfew rule ready: $(if ($Status.hardening.wired_curfew) { 'yes' } else { 'no' })"
+    Write-Host "  Bridge netfilter ready: $(if ($Status.hardening.bridge_netfilter) { 'yes' } else { 'no' })"
 
     $failsafe = if ($Status.PSObject.Properties['failsafe']) { $Status.failsafe } else { $null }
     if ($failsafe -and $failsafe.PSObject.Properties['active'] -and [bool]$failsafe.active) {

@@ -103,14 +103,14 @@ Describe 'QuietWrt PowerShell CLI' {
         Mock Invoke-QuietWrtRemote {
             [pscustomobject]@{
                 ExitStatus = 0
-                Output = '{"schema_version":"4","installed":true,"router_time":"21:05","protection_enabled":true,"enforcement_ready":true,"always_enabled":true,"workday_enabled":true,"after_work_enabled":true,"password_vault_enabled":true,"overnight_enabled":false,"saturday_blockout_enabled":true,"saturday_blockout_active":true,"always_count":1,"workday_count":2,"after_work_count":3,"password_vault_count":4,"active_rule_count":10,"schedule":{"after_work":{"start":"1630","end":"1900","display_start":"16:30","display_end":"19:00","overnight":false,"label":"After work","summary":"16:30 to 19:00"}},"hardening":{"dns_intercept":true,"dot_block":true,"overnight_rule":false},"warnings":[],"failsafe":{"active":true,"reason":"Could not read config."}}'
+                Output = '{"schema_version":"5","installed":true,"router_time":"21:05","protection_enabled":true,"enforcement_ready":true,"always_enabled":true,"workday_enabled":true,"after_work_enabled":true,"password_vault_enabled":true,"overnight_enabled":false,"saturday_blockout_enabled":true,"saturday_blockout_active":true,"always_count":1,"workday_count":2,"after_work_count":3,"password_vault_count":4,"active_rule_count":10,"schedule":{"after_work":{"start":"1630","end":"1900","display_start":"16:30","display_end":"19:00","overnight":false,"label":"After work","summary":"16:30 to 19:00"}},"hardening":{"dns_intercept":true,"dot_block":true,"overnight_rule":false,"wired_curfew":true,"bridge_netfilter":true},"warnings":[],"failsafe":{"active":true,"reason":"Could not read config."}}'
                 Raw = $null
             }
         }
 
         $status = Get-QuietWrtStatus -Connection ([pscustomobject]@{})
 
-        $status.schema_version | Should Be '4'
+        $status.schema_version | Should Be '5'
         $status.router_time | Should Be '21:05'
         $status.saturday_blockout_enabled | Should Be $true
         $status.saturday_blockout_active | Should Be $true
@@ -118,6 +118,8 @@ Describe 'QuietWrt PowerShell CLI' {
         $status.schedule.after_work.summary | Should Be '16:30 to 19:00'
         $status.schedule.workday | Should Be $null
         $status.schedule.password_vault | Should Be $null
+        $status.hardening.wired_curfew | Should Be $true
+        $status.hardening.bridge_netfilter | Should Be $true
         $status.failsafe.active | Should Be $true
         $status.failsafe.reason | Should Be 'Could not read config.'
     }
@@ -438,6 +440,89 @@ Describe 'QuietWrt PowerShell CLI' {
         Assert-MockCalled Send-QuietWrtSftpItem -Times 1 -Exactly -ParameterFilter { $Path -eq $initPath }
         Assert-MockCalled Send-QuietWrtSftpItem -Times 1 -Exactly -ParameterFilter { $Path -eq $moduleDir }
         Assert-MockCalled Invoke-QuietWrtRemote -Times 1 -Exactly -ParameterFilter { $Command -match '^\s*rm -rf /tmp/quietwrt-upload\s+mkdir -p /tmp/quietwrt-upload\s*$' }
-        Assert-MockCalled Invoke-QuietWrtRemote -Times 1 -Exactly -ParameterFilter { $TimeoutSeconds -eq 120 -and $Command -match 'cp /tmp/quietwrt-upload/quietwrt.init /etc/init.d/quietwrt' }
+        Assert-MockCalled Invoke-QuietWrtRemote -Times 1 -Exactly -ParameterFilter {
+            $TimeoutSeconds -eq 120 `
+                -and $Command -match 'cp /tmp/quietwrt-upload/quietwrt.init /etc/init.d/quietwrt' `
+                -and $Command.Contains('sed -i ''s/\r$//'' /www/cgi-bin/quietwrt /usr/bin/quietwrtctl /etc/init.d/quietwrt /usr/lib/lua/quietwrt/*.lua')
+        }
     }
+
+    It 'accepts only the validated MT3000 wired topology and legacy firewall' {
+        Mock Invoke-QuietWrtRemote {
+            [pscustomobject]@{
+                ExitStatus = 0
+                Output = @'
+openwrt_present=1
+openwrt_id=OpenWrt
+openwrt_release=21.02-SNAPSHOT
+glinet_present=1
+adguard_config_present=1
+adguard_protection_enabled=1
+timezone_present=1
+timezone=America/Denver
+adguard_init_present=1
+board_name=glinet,mt3000-snand
+lan_bridge=br-lan
+fw3_present=1
+iptables_version=iptables v1.8.7 (legacy)
+iptables_legacy=1
+kmod_ipt_physdev_installed=1
+iptables_mod_physdev_installed=1
+'@
+                Raw = $null
+            }
+        }
+
+        $preflight = Get-QuietWrtPreflight -Connection ([pscustomobject]@{})
+
+        $preflight.Passed | Should Be $true
+        $preflight.Details.board_name | Should Be 'glinet,mt3000-snand'
+        $preflight.Details.lan_bridge | Should Be 'br-lan'
+        $preflight.HardFailures.Count | Should Be 0
+    }
+
+    It 'rejects a router whose wired interface is not on br-lan' {
+        Mock Invoke-QuietWrtRemote {
+            [pscustomobject]@{
+                ExitStatus = 0
+                Output = @'
+openwrt_present=1
+openwrt_id=OpenWrt
+openwrt_release=21.02-SNAPSHOT
+glinet_present=1
+adguard_config_present=1
+adguard_protection_enabled=1
+timezone_present=1
+timezone=America/Denver
+adguard_init_present=1
+board_name=glinet,mt3000-snand
+lan_bridge=br-guest
+fw3_present=1
+iptables_version=iptables v1.8.7 (legacy)
+iptables_legacy=1
+kmod_ipt_physdev_installed=0
+iptables_mod_physdev_installed=0
+'@
+                Raw = $null
+            }
+        }
+
+        $preflight = Get-QuietWrtPreflight -Connection ([pscustomobject]@{})
+
+        $preflight.Passed | Should Be $false
+        ($preflight.HardFailures -join ' ') | Should Match 'eth1 attached to br-lan'
+    }
+
+    It 'installs the two official physdev packages and verifies the match' {
+        Mock Invoke-QuietWrtRemote { [pscustomobject]@{ ExitStatus = 0; Output = 'ready'; Raw = $null } }
+
+        Install-QuietWrtRouterDependencies -Connection ([pscustomobject]@{}) | Out-Null
+
+        Assert-MockCalled Invoke-QuietWrtRemote -Times 1 -Exactly -ParameterFilter {
+            $TimeoutSeconds -eq 180 `
+                -and $Command -match 'opkg install kmod-ipt-physdev iptables-mod-physdev' `
+                -and $Command -match 'iptables -m physdev -h'
+        }
+    }
+
 }

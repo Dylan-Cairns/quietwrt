@@ -6,8 +6,13 @@ local service = require("quietwrt.service")
 TestServiceIntegration = {}
 
 local function installed_capture_map(overrides)
-  local capture = {
-    ["uci -q get quietwrt.settings.schema_version"] = "4",
+  local capture = {}
+  for command, value in pairs(helper.PLATFORM_CAPTURE) do
+    capture[command] = value
+  end
+
+  local installed = {
+    ["uci -q get quietwrt.settings.schema_version"] = "5",
     ["uci -q get quietwrt.settings.always_enabled"] = "1",
     ["uci -q get quietwrt.settings.workday_enabled"] = "1",
     ["uci -q get quietwrt.settings.after_work_enabled"] = "1",
@@ -23,6 +28,9 @@ local function installed_capture_map(overrides)
     ["uci -q get quietwrt.settings.overnight_start"] = "1900",
     ["uci -q get quietwrt.settings.overnight_end"] = "0400",
   }
+  for command, value in pairs(installed) do
+    capture[command] = value
+  end
 
   for key, value in pairs(overrides or {}) do
     capture[key] = value
@@ -91,12 +99,49 @@ function TestServiceIntegration:test_install_bootstraps_lists_sets_default_sched
   lu.assertStrContains(crontab, "0 19 * * * /usr/bin/quietwrtctl sync")
 
   local joined = table.concat(fixture.commands, "\n")
-  lu.assertStrContains(joined, "uci set quietwrt.settings.schema_version='4'")
+  lu.assertStrContains(joined, "uci set quietwrt.settings.schema_version='5'")
   lu.assertStrContains(joined, "uci set quietwrt.settings.after_work_enabled='1'")
   lu.assertStrContains(joined, "uci set quietwrt.settings.password_vault_enabled='1'")
   lu.assertStrContains(joined, "uci set quietwrt.settings.saturday_blockout_enabled='0'")
   lu.assertStrContains(joined, "uci set quietwrt.settings.overnight_start='1900'")
   lu.assertStrContains(joined, "uci set firewall.quietwrt_curfew.enabled='0'")
+  fixture.cleanup()
+end
+
+function TestServiceIntegration:test_install_upgrades_v4_without_resetting_settings()
+  local fixture = helper.make_context({
+    capture_map = installed_capture_map({
+      ["uci -q get quietwrt.settings.schema_version"] = "4",
+      ["uci -q get quietwrt.settings.workday_enabled"] = "0",
+      ["uci -q get quietwrt.settings.overnight_enabled"] = "1",
+      ["uci -q get quietwrt.settings.saturday_blockout_enabled"] = "1",
+      ["uci -q get quietwrt.settings.overnight_start"] = "2030",
+      ["uci -q get quietwrt.settings.overnight_end"] = "0530",
+    }),
+    now = function()
+      return { hour = 12, min = 0, wday = 2 }
+    end,
+  })
+  helper.write_config(fixture.paths.config_path, {})
+  helper.write_file(fixture.paths.always_list_path, "example.com\n")
+  helper.write_file(fixture.paths.workday_list_path, "")
+  helper.write_file(fixture.paths.after_work_list_path, "")
+  helper.write_file(fixture.paths.password_vault_list_path, "")
+  helper.write_file(fixture.paths.passthrough_rules_path, "")
+
+  local ok = service.install(service.new_context({
+    env = fixture.env,
+    paths = fixture.paths,
+  }))
+
+  lu.assertTrue(ok)
+  local joined = table.concat(fixture.commands, "\n")
+  lu.assertStrContains(joined, "uci set quietwrt.settings.schema_version='5'")
+  lu.assertStrContains(joined, "uci set quietwrt.settings.workday_enabled='0'")
+  lu.assertStrContains(joined, "uci set quietwrt.settings.overnight_enabled='1'")
+  lu.assertStrContains(joined, "uci set quietwrt.settings.saturday_blockout_enabled='1'")
+  lu.assertStrContains(joined, "uci set quietwrt.settings.overnight_start='2030'")
+  lu.assertStrContains(joined, "uci set quietwrt.settings.overnight_end='0530'")
   fixture.cleanup()
 end
 
@@ -323,6 +368,7 @@ function TestServiceIntegration:test_status_json_reports_flags_counts_schedules_
       ["uci -q get firewall.quietwrt_dns_int.name"] = "QuietWrt-Intercept-DNS",
       ["uci -q get firewall.quietwrt_dot_fwd.name"] = "QuietWrt-Deny-DoT",
       ["uci -q get firewall.quietwrt_curfew.name"] = "QuietWrt-Internet-Curfew",
+      ["uci -q get firewall.quietwrt_curfew.extra"] = "-m physdev --physdev-in eth1 ! --physdev-is-bridged",
     },
   })
 
@@ -354,6 +400,8 @@ function TestServiceIntegration:test_status_json_reports_flags_counts_schedules_
   lu.assertStrContains(output, '"display_start":"09:45"')
   lu.assertStrContains(output, '"start":"0945"')
   lu.assertStrContains(output, '"dns_intercept":true')
+  lu.assertStrContains(output, '"wired_curfew":true')
+  lu.assertStrContains(output, '"bridge_netfilter":true')
   fixture.cleanup()
 end
 
@@ -404,7 +452,7 @@ function TestServiceIntegration:test_status_json_contract_exposes_router_time_sc
     json = true,
   })
   lu.assertTrue(ok)
-  lu.assertStrContains(output, '"schema_version":"4"')
+  lu.assertStrContains(output, '"schema_version":"5"')
   lu.assertStrContains(output, '"installed":true')
   lu.assertStrContains(output, '"router_time":"21:05"')
   lu.assertStrContains(output, '"schedule":{')
@@ -436,6 +484,8 @@ function TestServiceIntegration:test_status_json_contract_exposes_router_time_sc
   lu.assertStrContains(output, '"dns_intercept":false')
   lu.assertStrContains(output, '"dot_block":false')
   lu.assertStrContains(output, '"overnight_rule":false')
+  lu.assertStrContains(output, '"wired_curfew":false')
+  lu.assertStrContains(output, '"bridge_netfilter":true')
   lu.assertStrContains(output, '"warnings":[]')
   fixture.cleanup()
 end
@@ -470,6 +520,33 @@ function TestServiceIntegration:test_saturday_blockout_enables_curfew_firewall_r
 
   local joined = table.concat(fixture.commands, "\n")
   lu.assertStrContains(joined, "uci set firewall.quietwrt_curfew.enabled='1'")
+  lu.assertStrContains(joined, "uci set firewall.quietwrt_curfew.extra='-m physdev --physdev-in eth1 ! --physdev-is-bridged'")
+  fixture.cleanup()
+end
+
+function TestServiceIntegration:test_active_curfew_fails_open_when_bridge_netfilter_is_not_ready()
+  local fixture = installed_fixture({
+    now = function()
+      return { hour = 12, min = 0, wday = 7 }
+    end,
+    capture_map = {
+      ["uci -q get quietwrt.settings.overnight_enabled"] = "0",
+      ["uci -q get quietwrt.settings.saturday_blockout_enabled"] = "1",
+    },
+  })
+  helper.write_file(fixture.paths.bridge_netfilter_runtime_path, "0\n")
+
+  local context = service.new_context({
+    env = fixture.env,
+    paths = fixture.paths,
+  })
+  local ok, err = service.apply_current_mode(context)
+
+  lu.assertFalse(ok)
+  lu.assertStrContains(err, "Bridge iptables processing is not enabled")
+  local joined = table.concat(fixture.commands, "\n")
+  lu.assertStrContains(joined, "uci set firewall.quietwrt_curfew.enabled='0'")
+  lu.assertNil(joined:find("uci set firewall.quietwrt_curfew.enabled='1'", 1, true))
   fixture.cleanup()
 end
 
@@ -680,6 +757,8 @@ function TestServiceIntegration:test_status_json_uninstalled_contract_remains_ma
   lu.assertStrContains(output, '"dns_intercept":false')
   lu.assertStrContains(output, '"dot_block":false')
   lu.assertStrContains(output, '"overnight_rule":false')
+  lu.assertStrContains(output, '"wired_curfew":false')
+  lu.assertStrContains(output, '"bridge_netfilter":false')
   fixture.cleanup()
 end
 
@@ -704,7 +783,7 @@ function TestServiceIntegration:test_set_toggle_updates_settings_and_reapplies()
 
   local joined = table.concat(fixture.commands, "\n")
   lu.assertStrContains(joined, "uci set quietwrt.settings.after_work_enabled='0'")
-  lu.assertStrContains(joined, "uci set quietwrt.settings.schema_version='4'")
+  lu.assertStrContains(joined, "uci set quietwrt.settings.schema_version='5'")
   fixture.cleanup()
 end
 

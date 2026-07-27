@@ -35,6 +35,8 @@ function New-QuietWrtStatusPlaceholder {
             dns_intercept = $false
             dot_block = $false
             overnight_rule = $false
+            wired_curfew = $false
+            bridge_netfilter = $false
         }
         warnings = @()
         failsafe = [pscustomobject]@{
@@ -138,6 +140,8 @@ function Complete-QuietWrtStatus {
         dns_intercept = $false
         dot_block = $false
         overnight_rule = $false
+        wired_curfew = $false
+        bridge_netfilter = $false
     }
 
     $hardeningProperty = $Status.PSObject.Properties['hardening']

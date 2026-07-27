@@ -1,6 +1,7 @@
 local enforcement = require("quietwrt.enforcement")
 local firewall = require("quietwrt.firewall")
 local lists_store = require("quietwrt.lists_store")
+local platform = require("quietwrt.platform")
 local recovery = require("quietwrt.recovery")
 local runtime = require("quietwrt.runtime")
 local settings_store = require("quietwrt.settings_store")
@@ -76,7 +77,15 @@ local function status_snapshot(context)
     table.insert(warnings, list_error)
   end
 
-  local enforcement_ready = parsed_config ~= nil and enforcement.is_ready(context, parsed_config) or false
+  local platform_warning = platform.readiness_error(context)
+  if platform_warning then
+    table.insert(warnings, platform_warning)
+  end
+
+  local enforcement_ready = parsed_config ~= nil
+    and enforcement.is_ready(context, parsed_config)
+    and platform_warning == nil
+    or false
   local hardening = firewall.hardening_status(context)
   local snapshot = runtime.build_view_state(
     parsed_config,

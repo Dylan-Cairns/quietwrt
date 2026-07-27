@@ -19,6 +19,13 @@ local sep = package.config:sub(1, 1)
 local temp_counter = 0
 local suite_state = nil
 
+M.PLATFORM_CAPTURE = {
+  ['ubus call system board'] = '{ "board_name": "glinet,mt3000-snand" }',
+  ['basename "$(readlink -f /sys/class/net/eth1/brport/bridge 2>/dev/null)"'] = "br-lan",
+  ['command -v fw3 >/dev/null 2>&1 && iptables -V 2>/dev/null'] = "iptables v1.8.7 (legacy)",
+  ['iptables -m physdev -h >/dev/null 2>&1 && echo ready'] = "ready",
+}
+
 local function shell_escape(path)
   if sep == "\\" then
     return '"' .. tostring(path):gsub('"', '""') .. '"'
@@ -183,6 +190,9 @@ function M.make_context(overrides)
     init_service_enabled_path = M.join_path(root, "etc", "rc.d", "S99quietwrt"),
     restart_cron_command = "restart-cron",
     restart_firewall_command = "restart-firewall",
+    bridge_netfilter_config_path = M.join_path(root, "etc", "sysctl.d", "99-quietwrt-bridge-netfilter.conf"),
+    bridge_netfilter_runtime_path = M.join_path(root, "proc", "sys", "net", "bridge", "bridge-nf-call-iptables"),
+    iptables_physdev_extension_path = M.join_path(root, "usr", "lib", "iptables", "libxt_physdev.so"),
     lock_dir = M.join_path(root, "quietwrt.lock"),
     failsafe_marker_path = M.join_path(data_dir, "failsafe-open.txt"),
   }
@@ -195,7 +205,14 @@ function M.make_context(overrides)
     M.join_path(root, "etc", "config"),
     M.join_path(root, "etc", "init.d"),
     M.join_path(root, "etc", "rc.d"),
+    M.join_path(root, "etc", "sysctl.d"),
+    M.join_path(root, "proc", "sys", "net", "bridge"),
+    M.join_path(root, "usr", "lib", "iptables"),
   }), "failed to create fixture directory tree for " .. root)
+
+  assert(M.write_file(paths.bridge_netfilter_config_path, "net.bridge.bridge-nf-call-iptables=1\n"))
+  assert(M.write_file(paths.bridge_netfilter_runtime_path, "1\n"))
+  assert(M.write_file(paths.iptables_physdev_extension_path, "test-extension\n"))
 
   local command_log = {}
   local lock_dirs = {}
@@ -204,7 +221,13 @@ function M.make_context(overrides)
     return 0
   end
 
-  local capture_map = overrides.capture_map or {}
+  local capture_map = {}
+  for command, value in pairs(M.PLATFORM_CAPTURE) do
+    capture_map[command] = value
+  end
+  for command, value in pairs(overrides.capture_map or {}) do
+    capture_map[command] = value
+  end
   local capture = overrides.capture or function(command)
     if capture_map[command] ~= nil then
       return capture_map[command]

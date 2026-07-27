@@ -179,7 +179,7 @@ local function render_overnight_detail(window)
     return util.html_escape("Overnight lockout window is unavailable.")
   end
 
-  local detail = "Internet access is fully blocked from "
+  local detail = "Wired LAN internet access is blocked from "
     .. render_code(window.display_start)
     .. " until "
     .. render_code(window.display_end)
@@ -188,7 +188,7 @@ local function render_overnight_detail(window)
     detail = detail .. " (overnight)"
   end
 
-  return detail .. "."
+  return detail .. "; Wi-Fi clients remain online."
 end
 
 local function render_enabled_chip(enabled)
@@ -464,7 +464,7 @@ function M.render_page(script_name, state)
       render_enabled_chip(settings.saturday_blockout_enabled),
       render_activity_chip(settings.saturday_blockout_enabled, state.saturday_blockout_active),
       render_enable_form(script_name, "saturday_blockout", settings.saturday_blockout_enabled),
-    }, "Blocks LAN to WAN internet access on Saturdays."),
+    }, "Blocks wired LAN clients from reaching the internet on Saturdays; Wi-Fi clients remain online."),
   }
   local parts = {}
 

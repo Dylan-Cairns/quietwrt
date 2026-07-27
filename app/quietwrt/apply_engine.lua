@@ -1,6 +1,7 @@
 local enforcement = require("quietwrt.enforcement")
 local firewall = require("quietwrt.firewall")
 local lists_store = require("quietwrt.lists_store")
+local platform = require("quietwrt.platform")
 local rules = require("quietwrt.rules")
 local runtime = require("quietwrt.runtime")
 local settings_store = require("quietwrt.settings_store")
@@ -10,6 +11,25 @@ local M = {}
 local function reconcile_firewall(context, activity)
   local curfew_enabled = activity.overnight_active or activity.saturday_blockout_active
   local previous_firewall = firewall.capture_snapshot(context)
+  if curfew_enabled then
+    local platform_ok, platform_error = platform.require_ready(context)
+    if not platform_ok then
+      local safe_ok, safe_error = firewall.commit_snapshot(context, firewall.desired_snapshot(false))
+      if not safe_ok then
+        return false, {
+          error = platform_error .. " Could not force the wired curfew open: " .. safe_error,
+          previous = previous_firewall,
+        }
+      end
+
+      return false, {
+        error = platform_error .. " The wired curfew was left disabled.",
+        previous = previous_firewall,
+        safe_state_applied = true,
+      }
+    end
+  end
+
   local desired_firewall = firewall.desired_snapshot(curfew_enabled)
   if firewall.snapshots_equal(previous_firewall, desired_firewall) then
     return true, {
@@ -117,12 +137,17 @@ function M.apply_mode(context, options)
         end
       end
 
-      local firewall_restore_ok, firewall_restore_error = firewall.commit_snapshot(context, firewall_result.previous)
-      if not firewall_restore_ok then
-        table.insert(rollback_errors, firewall_restore_error)
+      if not firewall_result.safe_state_applied then
+        local firewall_restore_ok, firewall_restore_error = firewall.commit_snapshot(context, firewall_result.previous)
+        if not firewall_restore_ok then
+          table.insert(rollback_errors, firewall_restore_error)
+        end
       end
 
       if #rollback_errors == 0 then
+        if firewall_result.safe_state_applied then
+          return false, firewall_result.error .. " Previous AdGuard state was restored."
+        end
         return false, firewall_result.error .. " Previous state was restored."
       end
 

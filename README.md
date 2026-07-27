@@ -9,15 +9,15 @@ It keeps four canonical blocklists on the router:
 - `after work blocked`
 - `password vault blocked`
 
-It can also enforce complete internet lockouts by blocking `LAN -> WAN` traffic during the nightly curfew, and optionally all day Saturday.
+It can also enforce wired-client internet lockouts during the nightly curfew, and optionally all day Saturday. Wi-Fi clients remain online during these lockouts.
 
 ## Schedule
 
 - `04:00` to `16:30`: `always + workday`
 - `16:30` to `19:00`: `always + after work`
 - `09:45` to `09:30`: `always + password vault`
-- `19:00` to `04:00`: internet off when overnight blocking is enabled
-- Saturday: internet off all day when Saturday blockout is enabled
+- `19:00` to `04:00`: wired internet off when overnight blocking is enabled
+- Saturday: wired internet off all day when Saturday blockout is enabled
 
 You can change the `workday`, `after work`, `password vault`, and `overnight` windows later from the PowerShell CLI or with `quietwrtctl schedule ...`.
 
@@ -26,8 +26,9 @@ You can change the `workday`, `after work`, `password vault`, and `overnight` wi
 - `AdGuard Home` handles domain blocking
 - QuietWrt fails closed if `AdGuard Home` protection is disabled
 - QuietWrt stores canonical list files in `/etc/quietwrt/`
-- firewall rules reduce DNS bypass and enforce the nightly curfew
-- the same curfew firewall rule is reused for the optional Saturday blockout
+- firewall rules reduce DNS bypass and enforce the nightly wired-client curfew
+- the curfew uses the MT3000's `eth1` ingress identity on the shared `br-lan`, so wireless clients are not included
+- the same wired-client curfew firewall rule is reused for the optional Saturday blockout
 - a boot-time health check, boot-time sync, and recurring sync jobs keep policy aligned after reboot and across schedule transitions
 - state-changing operations use a router-side lock and safe file replacement so overlapping cron, boot, web, or CLI actions do not corrupt managed state
 - if QuietWrt detects corrupt control-plane state at boot, it enters failsafe-open mode, removes QuietWrt firewall restrictions, disables QuietWrt toggles, and writes `/etc/quietwrt/failsafe-open.txt`

@@ -16,6 +16,8 @@ Before installing QuietWrt, confirm these in the GL.iNet admin UI:
 6. the router timezone is correct
 7. `AdGuard Home` is enabled and protection is on
 
+QuietWrt targets the stock GL-MT3000 topology exactly: wired LAN on `eth1`, WAN on `eth0`, and `eth1` attached to `br-lan`. Install/update checks this topology and the fw3/iptables-legacy firewall before making changes.
+
 ## 2. Local Machine Prerequisites
 
 On the Windows machine where you will run the local CLI:
@@ -61,12 +63,16 @@ Install/update uploads these router-side files:
 
 It then:
 
+- installs the official `kmod-ipt-physdev` and `iptables-mod-physdev` packages if needed
+- enables bridge IPv4 firewall visibility at runtime and persists it in `/etc/sysctl.d/99-quietwrt-bridge-netfilter.conf`
 - creates or validates the canonical QuietWrt files in `/etc/quietwrt/`
 - writes persistent toggle state in UCI under `quietwrt.settings.*`
 - installs the managed cron block
 - enables the QuietWrt boot check and sync init script
 - installs or refreshes the managed firewall sections
 - applies the current schedule state immediately
+
+The overnight and Saturday lockouts match routed traffic that entered through wired LAN device `eth1`. Wi-Fi clients on the shared `br-lan` remain online. QuietWrt does not create a second network, subnet, DHCP service, or firewall zone.
 
 Fresh installs currently default to:
 
@@ -133,8 +139,8 @@ Fresh installs default to these windows:
 - `04:00` to `16:30`: `always + workday`
 - `16:30` to `19:00`: `always + after work`
 - `09:45` to `09:30`: `always + password vault`
-- `19:00` to `04:00`: internet off when overnight blocking is enabled
-- Saturday: internet off all day when Saturday blockout is enabled
+- `19:00` to `04:00`: wired internet off when overnight blocking is enabled
+- Saturday: wired internet off all day when Saturday blockout is enabled
 
 QuietWrt reconciles state in three ways:
 
@@ -161,6 +167,8 @@ The boot check validates QuietWrt-owned control-plane state:
 - AdGuard Home config is readable
 - QuietWrt UCI settings are valid
 - canonical list files exist and parse
+- the router is the supported `glinet,mt3000-snand` board with `eth1` attached to `br-lan`
+- fw3/iptables legacy, the physdev match, and bridge-netfilter configuration are ready
 
 If those checks fail, QuietWrt enters failsafe-open mode. It removes the managed firewall sections, disables all QuietWrt toggles, clears QuietWrt blocking rules from AdGuard Home when the AdGuard config is readable, and writes:
 
@@ -188,6 +196,18 @@ QuietWrt-managed firewall sections are:
 - `firewall.quietwrt_dns_int`
 - `firewall.quietwrt_dot_fwd`
 - `firewall.quietwrt_curfew`
+
+The curfew section remains a normal `lan -> wan` fw3 rule, with this wired-ingress match:
+
+```text
+-m physdev --physdev-in eth1 ! --physdev-is-bridged
+```
+
+QuietWrt also manages:
+
+- `/etc/sysctl.d/99-quietwrt-bridge-netfilter.conf`
+- runtime sysctl `net.bridge.bridge-nf-call-iptables=1`
+- package prerequisites `kmod-ipt-physdev` and `iptables-mod-physdev`
 
 QuietWrt UCI state lives under:
 
@@ -238,11 +258,12 @@ After install, confirm:
 2. a site added to `Workday blocked` is blocked before `16:30`
 3. a site added to `After work blocked` is blocked between `16:30` and `19:00`
 4. a site added to `Password vault blocked` is blocked except during the daily `09:30` to `09:45` opening
-5. internet access is unavailable between `19:00` and `04:00` when overnight blocking is enabled
-6. internet access is unavailable on Saturday when Saturday blockout is enabled
-7. router-local access to `https://<router-ip>:8443/cgi-bin/quietwrt` still works during lockout windows
-8. direct client DNS on `53` is intercepted
-9. direct `DoT` on `853` is blocked
+5. wired internet access is unavailable between `19:00` and `04:00` when overnight blocking is enabled
+6. wired internet access is unavailable on Saturday when Saturday blockout is enabled
+7. a Wi-Fi phone remains online during both wired lockouts
+8. router-local access to `https://<router-ip>:8443/cgi-bin/quietwrt` still works during lockout windows
+9. direct client DNS on `53` is intercepted
+10. direct `DoT` on `853` is blocked
 
 ## 11. Direct Router Commands
 

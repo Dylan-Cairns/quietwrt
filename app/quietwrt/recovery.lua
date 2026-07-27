@@ -2,6 +2,7 @@ local context_helpers = require("quietwrt.context")
 local enforcement = require("quietwrt.enforcement")
 local firewall = require("quietwrt.firewall")
 local lists_store = require("quietwrt.lists_store")
+local platform = require("quietwrt.platform")
 local rules = require("quietwrt.rules")
 local schema = require("quietwrt.schema")
 local settings_store = require("quietwrt.settings_store")
@@ -174,6 +175,11 @@ function M.validate_boot_state(context)
   })
   if not lists then
     return false, list_error
+  end
+
+  local platform_ok, platform_error = platform.require_ready(context)
+  if not platform_ok then
+    return false, platform_error
   end
 
   return true, nil

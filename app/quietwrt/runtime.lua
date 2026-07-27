@@ -194,6 +194,8 @@ function M.uninstalled_snapshot(now_table)
       dns_intercept = false,
       dot_block = false,
       overnight_rule = false,
+      wired_curfew = false,
+      bridge_netfilter = false,
     },
     warnings = {},
     router_time = M.format_router_time(now_table),

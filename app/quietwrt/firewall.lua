@@ -1,4 +1,5 @@
 local context_helpers = require("quietwrt.context")
+local platform = require("quietwrt.platform")
 local schema = require("quietwrt.schema")
 local util = require("quietwrt.util")
 
@@ -77,11 +78,16 @@ function M.hardening_status(context)
   local dns_name = context.env.capture("uci -q get firewall.quietwrt_dns_int.name")
   local dot_name = context.env.capture("uci -q get firewall.quietwrt_dot_fwd.name")
   local overnight_name = context.env.capture("uci -q get firewall.quietwrt_curfew.name")
+  local curfew_extra = context.env.capture("uci -q get firewall.quietwrt_curfew.extra")
+  local wired_curfew = overnight_name == "QuietWrt-Internet-Curfew"
+    and curfew_extra == platform.CURFEW_EXTRA
 
   return {
     dns_intercept = dns_name ~= nil and dns_name ~= "",
     dot_block = dot_name ~= nil and dot_name ~= "",
     overnight_rule = overnight_name ~= nil and overnight_name ~= "",
+    wired_curfew = wired_curfew,
+    bridge_netfilter = platform.is_ready(context),
   }
 end
 
@@ -121,6 +127,7 @@ function M.desired_snapshot(curfew_enabled)
       _type = "rule",
       dest = "wan",
       enabled = value,
+      extra = platform.CURFEW_EXTRA,
       family = "ipv4",
       name = "QuietWrt-Internet-Curfew",
       proto = "all",

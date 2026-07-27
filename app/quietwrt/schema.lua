@@ -1,6 +1,9 @@
 local M = {}
 
-M.SCHEMA_VERSION = "4"
+M.SCHEMA_VERSION = "5"
+M.UPGRADABLE_SCHEMA_VERSIONS = {
+  ["4"] = true,
+}
 
 M.MANAGED_FIREWALL_SECTIONS = {
   "quietwrt_dns_int",

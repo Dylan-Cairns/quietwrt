@@ -52,7 +52,8 @@ function M.render_text(snapshot)
     "Active rules: " .. tostring(snapshot.active_rule_count),
     "DNS intercept hardening: " .. (snapshot.hardening.dns_intercept and "yes" or "no"),
     "DoT block hardening: " .. (snapshot.hardening.dot_block and "yes" or "no"),
-    "Overnight rule present: " .. (snapshot.hardening.overnight_rule and "yes" or "no"),
+    "Wired curfew rule ready: " .. (snapshot.hardening.wired_curfew and "yes" or "no"),
+    "Bridge netfilter ready: " .. (snapshot.hardening.bridge_netfilter and "yes" or "no"),
   }
 
   if failsafe.active then

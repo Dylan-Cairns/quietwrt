@@ -3,6 +3,7 @@ local cron = require("quietwrt.cron")
 local enforcement = require("quietwrt.enforcement")
 local firewall = require("quietwrt.firewall")
 local lists_store = require("quietwrt.lists_store")
+local platform = require("quietwrt.platform")
 local settings_store = require("quietwrt.settings_store")
 
 local M = {}
@@ -70,6 +71,12 @@ local function rollback_install(context, rollback_state)
     end
   end
 
+  if rollback_state.platform_changed then
+    for _, platform_error in ipairs(platform.restore(context, rollback_state.original_platform)) do
+      table.insert(rollback_errors, platform_error)
+    end
+  end
+
   return rollback_errors
 end
 
@@ -86,15 +93,15 @@ function M.install(context)
 
   local install_state = settings_store.read_install_state(context)
   local lists, list_error = lists_store.load(context, parsed_config, {
-    installed = install_state.installed,
-    allow_bootstrap = not install_state.installed,
+    installed = install_state.managed,
+    allow_bootstrap = not install_state.managed,
   })
   if not lists then
     return false, list_error
   end
 
   local staged_settings
-  if install_state.installed then
+  if install_state.managed then
     local settings_error
     staged_settings, settings_error = settings_store.read_settings(context, true)
     if not staged_settings then
@@ -105,8 +112,9 @@ function M.install(context)
   end
 
   local original_settings = nil
-  if install_state.installed then
+  if install_state.managed then
     original_settings = settings_store.copy_settings(staged_settings)
+    original_settings.schema_version = install_state.schema_version
   end
 
   local rollback_state = {
@@ -116,16 +124,27 @@ function M.install(context)
     original_adguard_config = parsed_config.content,
     original_firewall = firewall.capture_snapshot(context),
     original_settings = original_settings,
-    schedule_changed = true,
+    schedule_changed = false,
     boot_service_changed = false,
     applied = false,
+    original_platform = nil,
+    platform_changed = false,
   }
+
+  local platform_ok, platform_result = platform.prepare(context)
+  if not platform_ok then
+    local rollback_errors = rollback_install(context, rollback_state)
+    return false, append_rollback_errors(platform_result, rollback_errors)
+  end
+  rollback_state.original_platform = platform_result
+  rollback_state.platform_changed = true
 
   local schedule_ok, schedule_error = cron.install_schedule(context, staged_settings)
   if not schedule_ok then
     local rollback_errors = rollback_install(context, rollback_state)
     return false, append_rollback_errors(schedule_error, rollback_errors)
   end
+  rollback_state.schedule_changed = true
 
   local boot_service_ok, boot_service_error = cron.enable_boot_sync_service(context)
   if not boot_service_ok then

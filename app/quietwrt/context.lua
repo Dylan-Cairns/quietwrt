@@ -86,6 +86,9 @@ function M.default_paths()
     init_service_enabled_path = "/etc/rc.d/S99quietwrt",
     restart_cron_command = "/etc/init.d/cron restart >/tmp/quietwrt-cron-restart.log 2>&1",
     restart_firewall_command = "/etc/init.d/firewall restart >/tmp/quietwrt-firewall-restart.log 2>&1",
+    bridge_netfilter_config_path = "/etc/sysctl.d/99-quietwrt-bridge-netfilter.conf",
+    bridge_netfilter_runtime_path = "/proc/sys/net/bridge/bridge-nf-call-iptables",
+    iptables_physdev_extension_path = "/usr/lib/iptables/libxt_physdev.so",
     lock_dir = "/tmp/quietwrt.lock",
     failsafe_marker_path = data_dir .. "/failsafe-open.txt",
   }
