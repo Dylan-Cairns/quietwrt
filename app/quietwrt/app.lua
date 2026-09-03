@@ -166,6 +166,9 @@ function M.run_cgi(options)
     password_vault_hosts = state and state.password_vault_hosts or {},
     active_rules = state and state.active_rules or {},
     active_rule_count = state and state.active_rule_count or 0,
+    desired_active_rule_count = state and state.desired_active_rule_count or 0,
+    effective_active_rule_count = state and state.effective_active_rule_count or 0,
+    reconciliation_state = state and state.reconciliation_state,
   })
 end
 

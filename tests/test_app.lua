@@ -1,6 +1,7 @@
 local app = require("quietwrt.app")
 local helper = require("test_helper")
 local lu = require("luaunit")
+local service = require("quietwrt.service")
 
 TestApp = {}
 
@@ -120,6 +121,34 @@ function TestApp:test_get_download_zip_returns_attachment()
   lu.assertStrContains(output, "always-blocked.txtalways.example\n")
   lu.assertStrContains(output, "password-vault-blocked.txtvault.example\n")
   fixture.cleanup()
+end
+
+function TestApp:test_get_renders_reconciliation_state_and_effective_rule_count()
+  local original_load_view_state = service.load_view_state
+  service.load_view_state = function()
+    return {
+      reconciliation_state = "applied",
+      active_rule_count = 3498,
+      desired_active_rule_count = 3498,
+      effective_active_rule_count = 3498,
+    }
+  end
+
+  local ok, output = xpcall(function()
+    return capture_cgi({
+      REQUEST_METHOD = "GET",
+      QUERY_STRING = "",
+      SCRIPT_NAME = "/cgi-bin/quietwrt",
+    }, {})
+  end, debug.traceback)
+  service.load_view_state = original_load_view_state
+
+  if not ok then
+    error(output)
+  end
+
+  lu.assertStrContains(output, '<span class="status-text">applied</span>')
+  lu.assertStrContains(output, "Desired active rules: 3498; effective active rules: 3498.")
 end
 
 function TestApp:test_post_import_zip_merges_uploaded_archive()
