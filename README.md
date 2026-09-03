@@ -24,14 +24,16 @@ You can change the `workday`, `after work`, `password vault`, and `overnight` wi
 ## How It Works
 
 - `AdGuard Home` handles domain blocking
-- QuietWrt fails closed if `AdGuard Home` protection is disabled
+- QuietWrt treats disabled `AdGuard Home` protection as unhealthy and will not report policy as applied
 - QuietWrt stores canonical list files in `/etc/quietwrt/`
 - firewall rules reduce DNS bypass and enforce the nightly wired-client curfew
 - the curfew uses the MT3000's `eth1` ingress identity on the shared `br-lan`, so wireless clients are not included
 - the same wired-client curfew firewall rule is reused for the optional Saturday blockout
-- a boot-time health check, boot-time sync, and recurring sync jobs keep policy aligned after reboot and across schedule transitions
+- one reconciliation operation is used at boot, by recurring sync jobs, and after state changes
 - state-changing operations use a router-side lock and safe file replacement so overlapping cron, boot, web, or CLI actions do not corrupt managed state
-- if QuietWrt detects corrupt control-plane state at boot, it enters failsafe-open mode, removes QuietWrt firewall restrictions, disables QuietWrt toggles, and writes `/etc/quietwrt/failsafe-open.txt`
+- at boot, QuietWrt validates persistent state, repairs its managed bridge-netfilter setting, and applies policy
+- if reconciliation fails, QuietWrt removes its restrictions without changing desired policy and latches failsafe-open for the rest of that boot
+- a later boot can recover automatically; authenticated operators can explicitly attempt same-boot recovery with `quietwrtctl recover`
 - a small LAN page can append new entries to any scheduled blocklist and enable disabled restrictions
 - a Windows PowerShell CLI installs, updates, toggles, edits schedule windows, backs up, and restores QuietWrt over SSH
 

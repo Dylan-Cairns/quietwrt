@@ -175,9 +175,10 @@ Usage: quietwrtctl <command>
 
 Commands:
   install   Bootstrap list files, install cron sync, and apply the current schedule state.
-  boot-check Validate QuietWrt state at boot; enter failsafe-open if state is corrupt.
-  sync      Rebuild AdGuard rules for the current time and update curfew firewall state.
+  boot-check Reconcile once at boot; recover an older failsafe or latch open on failure.
+  sync      Reconcile desired policy, runtime prerequisites, and failsafe state.
   apply     Alias for sync.
+  recover   Authenticated same-boot attempt to leave failsafe-open mode.
   status    Show current list counts and schedule state. Use --json for machine-readable output.
   set       Toggle always, workday, after_work, password_vault, overnight, or saturday_blockout on or off.
   schedule  Set workday, after_work, password_vault, or overnight start/end times.
@@ -251,7 +252,10 @@ function M.run_cli(argv, options)
       return 2
     end
 
-    io.write("QuietWrt boot check passed.\n")
+    io.write(
+      result.recovered and "QuietWrt boot recovery applied.\n"
+      or "QuietWrt boot reconciliation passed.\n"
+    )
     return 0
   end
 
@@ -261,7 +265,33 @@ function M.run_cli(argv, options)
       io.stderr:write(result, "\n")
       return 1
     end
+    if result.failsafe_open then
+      io.stderr:write("QuietWrt remains latched in failsafe-open mode: ", tostring(result.reason), "\n")
+      return 2
+    end
+    if result.uninstalled then
+      io.stderr:write("QuietWrt is not installed.\n")
+      return 1
+    end
     io.write("Applied QuietWrt state with ", tostring(result.active_rule_count), " active rules.\n")
+    return 0
+  end
+
+  if command == "recover" then
+    local ok, result = service.recover(context)
+    if not ok then
+      io.stderr:write(result, "\n")
+      return 1
+    end
+    if result.failsafe_open then
+      io.stderr:write("QuietWrt recovery could not leave failsafe-open mode: ", tostring(result.reason), "\n")
+      return 2
+    end
+    if result.uninstalled then
+      io.stderr:write("QuietWrt is not installed.\n")
+      return 1
+    end
+    io.write("QuietWrt recovered with ", tostring(result.active_rule_count), " active rules.\n")
     return 0
   end
 

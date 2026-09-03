@@ -30,6 +30,7 @@ function M.render_text(snapshot)
       or "unknown"
     ),
     "Enforcement ready: " .. (snapshot.enforcement_ready and "yes" or "no"),
+    "Reconciliation state: " .. tostring(snapshot.reconciliation_state or "unknown"),
     "Always enabled: " .. (snapshot.settings.always_enabled and "yes" or "no"),
     "Workday enabled: " .. (snapshot.settings.workday_enabled and "yes" or "no"),
     "Workday active now: " .. (snapshot.workday_active and "yes" or "no"),
@@ -50,6 +51,8 @@ function M.render_text(snapshot)
     "After work blocked: " .. tostring(#snapshot.after_work_hosts),
     "Password vault blocked: " .. tostring(#snapshot.password_vault_hosts),
     "Active rules: " .. tostring(snapshot.active_rule_count),
+    "Desired active rules: " .. tostring(snapshot.desired_active_rule_count or snapshot.active_rule_count),
+    "Effective active rules: " .. tostring(snapshot.effective_active_rule_count or 0),
     "DNS intercept hardening: " .. (snapshot.hardening.dns_intercept and "yes" or "no"),
     "DoT block hardening: " .. (snapshot.hardening.dot_block and "yes" or "no"),
     "Wired curfew rule ready: " .. (snapshot.hardening.wired_curfew and "yes" or "no"),
@@ -77,6 +80,7 @@ function M.render_json(snapshot)
     router_time = snapshot.router_time,
     protection_enabled = snapshot.protection_enabled,
     enforcement_ready = snapshot.enforcement_ready,
+    reconciliation_state = snapshot.reconciliation_state,
     always_enabled = snapshot.settings.always_enabled,
     workday_enabled = snapshot.settings.workday_enabled,
     after_work_enabled = snapshot.settings.after_work_enabled,
@@ -99,6 +103,8 @@ function M.render_json(snapshot)
     after_work_count = #snapshot.after_work_hosts,
     password_vault_count = #snapshot.password_vault_hosts,
     active_rule_count = snapshot.active_rule_count,
+    desired_active_rule_count = snapshot.desired_active_rule_count or snapshot.active_rule_count,
+    effective_active_rule_count = snapshot.effective_active_rule_count or 0,
     hardening = snapshot.hardening,
     warnings = snapshot.warnings,
     failsafe = snapshot.failsafe or {

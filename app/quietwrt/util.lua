@@ -197,6 +197,22 @@ function M.clone_array(items)
   return result
 end
 
+function M.arrays_equal(left, right)
+  left = left or {}
+  right = right or {}
+  if #left ~= #right then
+    return false
+  end
+
+  for index, value in ipairs(left) do
+    if value ~= right[index] then
+      return false
+    end
+  end
+
+  return true
+end
+
 function M.contains(items, value)
   for _, item in ipairs(items or {}) do
     if item == value then

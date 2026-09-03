@@ -249,7 +249,7 @@ local function render_state_warnings(warnings, failsafe)
   if failsafe and failsafe.active then
     table.insert(
       parts,
-      '<div class="banner error">QuietWrt entered failsafe-open mode: '
+      '<div class="banner error">QuietWrt entered failsafe-open mode and will remain open for this boot: '
         .. util.html_escape(failsafe.reason or "Unknown failure.")
         .. "</div>\n"
     )
@@ -432,10 +432,19 @@ function M.render_page(script_name, state)
     password_vault = state.password_vault_hosts or {},
   }
   local schedule_state = state.schedule or {}
+  local reconciliation_label = tostring(state.reconciliation_state or "unknown"):gsub("_", " ")
+  local rule_count_detail = "Desired active rules: "
+    .. tostring(state.desired_active_rule_count or state.active_rule_count or 0)
+    .. "; effective active rules: "
+    .. tostring(state.effective_active_rule_count or 0)
+    .. "."
   local status_items = {
     render_status_item("Router time", {
       render_status_text(state.router_time or "Unknown"),
     }),
+    render_status_item("Policy reconciliation", {
+      render_status_text(reconciliation_label),
+    }, rule_count_detail),
     render_status_item("Always blocklist", {
       render_enabled_chip(settings.always_enabled),
       render_enable_form(script_name, "always", settings.always_enabled),

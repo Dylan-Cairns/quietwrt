@@ -1,12 +1,27 @@
-local apply_engine = require("quietwrt.apply_engine")
 local cron = require("quietwrt.cron")
 local enforcement = require("quietwrt.enforcement")
 local lists_store = require("quietwrt.lists_store")
+local reconciler = require("quietwrt.reconciler")
 local schedule = require("quietwrt.schedule")
 local schema = require("quietwrt.schema")
 local settings_store = require("quietwrt.settings_store")
 
 local M = {}
+
+local function reconcile_applied(context, desired)
+  local ok, result = reconciler.reconcile(context, {
+    desired = desired,
+  })
+  if not ok then
+    return false, result
+  end
+
+  if result.failsafe_open then
+    return false, "QuietWrt entered failsafe-open mode: " .. tostring(result.reason)
+  end
+
+  return true, result
+end
 
 local function append_rollback_errors(message, rollback_errors)
   if rollback_errors == nil or #rollback_errors == 0 then
@@ -72,7 +87,7 @@ local function apply_settings_change(context, next_settings)
     return false, schedule_error
   end
 
-  local applied, apply_result = apply_engine.apply_mode(context, {
+  local applied, apply_result = reconcile_applied(context, {
     parsed_config = parsed_config,
     lists = lists,
     settings = next_settings,
@@ -100,7 +115,7 @@ local function apply_settings_change(context, next_settings)
       table.insert(rollback_errors, restored_settings_error)
     end
 
-    local restored, restore_error = apply_engine.apply_mode(context, {
+    local restored, restore_error = reconcile_applied(context, {
       parsed_config = parsed_config,
       lists = lists,
       settings = current_settings,

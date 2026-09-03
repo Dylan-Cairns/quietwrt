@@ -90,6 +90,9 @@ Describe 'QuietWrt PowerShell CLI' {
         $status.password_vault_enabled | Should Be $false
         $status.saturday_blockout_enabled | Should Be $false
         $status.password_vault_count | Should Be 0
+        $status.reconciliation_state | Should Be 'unknown'
+        $status.desired_active_rule_count | Should Be 2
+        $status.effective_active_rule_count | Should Be 2
         $status.schedule.workday.name | Should Be 'workday'
         $status.schedule.workday.label | Should Be 'Workday'
         $status.schedule.workday.summary | Should Be '04:00 to 16:30'
@@ -103,7 +106,7 @@ Describe 'QuietWrt PowerShell CLI' {
         Mock Invoke-QuietWrtRemote {
             [pscustomobject]@{
                 ExitStatus = 0
-                Output = '{"schema_version":"5","installed":true,"router_time":"21:05","protection_enabled":true,"enforcement_ready":true,"always_enabled":true,"workday_enabled":true,"after_work_enabled":true,"password_vault_enabled":true,"overnight_enabled":false,"saturday_blockout_enabled":true,"saturday_blockout_active":true,"always_count":1,"workday_count":2,"after_work_count":3,"password_vault_count":4,"active_rule_count":10,"schedule":{"after_work":{"start":"1630","end":"1900","display_start":"16:30","display_end":"19:00","overnight":false,"label":"After work","summary":"16:30 to 19:00"}},"hardening":{"dns_intercept":true,"dot_block":true,"overnight_rule":false,"wired_curfew":true,"bridge_netfilter":true},"warnings":[],"failsafe":{"active":true,"reason":"Could not read config."}}'
+                Output = '{"schema_version":"5","installed":true,"router_time":"21:05","protection_enabled":true,"enforcement_ready":true,"reconciliation_state":"failsafe_open","always_enabled":true,"workday_enabled":true,"after_work_enabled":true,"password_vault_enabled":true,"overnight_enabled":false,"saturday_blockout_enabled":true,"saturday_blockout_active":true,"always_count":1,"workday_count":2,"after_work_count":3,"password_vault_count":4,"active_rule_count":10,"desired_active_rule_count":10,"effective_active_rule_count":1,"schedule":{"after_work":{"start":"1630","end":"1900","display_start":"16:30","display_end":"19:00","overnight":false,"label":"After work","summary":"16:30 to 19:00"}},"hardening":{"dns_intercept":true,"dot_block":true,"overnight_rule":false,"wired_curfew":true,"bridge_netfilter":true},"warnings":[],"failsafe":{"active":true,"reason":"Could not read config."}}'
                 Raw = $null
             }
         }
@@ -112,6 +115,9 @@ Describe 'QuietWrt PowerShell CLI' {
 
         $status.schema_version | Should Be '5'
         $status.router_time | Should Be '21:05'
+        $status.reconciliation_state | Should Be 'failsafe_open'
+        $status.desired_active_rule_count | Should Be 10
+        $status.effective_active_rule_count | Should Be 1
         $status.saturday_blockout_enabled | Should Be $true
         $status.saturday_blockout_active | Should Be $true
         $status.schedule.after_work.label | Should Be 'After work'

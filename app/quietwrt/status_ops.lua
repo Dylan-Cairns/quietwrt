@@ -6,6 +6,7 @@ local recovery = require("quietwrt.recovery")
 local runtime = require("quietwrt.runtime")
 local settings_store = require("quietwrt.settings_store")
 local status_render = require("quietwrt.status_render")
+local util = require("quietwrt.util")
 
 local M = {}
 
@@ -28,6 +29,9 @@ local function degraded_snapshot(context, now_table, install_state, failsafe, wa
   snapshot.hardening = firewall.hardening_status(context)
   snapshot.warnings = warnings or {}
   snapshot.failsafe = failsafe
+  snapshot.reconciliation_state = failsafe.active and "failsafe_open" or "degraded"
+  snapshot.desired_active_rule_count = 0
+  snapshot.effective_active_rule_count = 0
   return snapshot
 end
 
@@ -41,6 +45,9 @@ local function status_snapshot(context)
     snapshot.schema_version = install_state.schema_version
     snapshot.install_state = install_state
     snapshot.failsafe = failsafe
+    snapshot.reconciliation_state = failsafe.active and "failsafe_open" or "uninstalled"
+    snapshot.desired_active_rule_count = 0
+    snapshot.effective_active_rule_count = 0
     return snapshot, nil
   end
 
@@ -101,6 +108,21 @@ local function status_snapshot(context)
   snapshot.install_state = install_state
   snapshot.warnings = warnings
   snapshot.failsafe = failsafe
+  snapshot.desired_active_rule_count = snapshot.active_rule_count
+  snapshot.effective_active_rule_count = parsed_config and #(parsed_config.rules or {}) or 0
+
+  local desired_firewall = firewall.desired_snapshot(
+    activity.overnight_active or activity.saturday_blockout_active
+  )
+  local adguard_applied = parsed_config ~= nil
+    and util.arrays_equal(parsed_config.rules, snapshot.active_rules)
+  local firewall_applied = firewall.snapshots_equal(
+    firewall.capture_snapshot(context),
+    desired_firewall
+  ) and firewall.runtime_matches_snapshot(context, desired_firewall)
+  snapshot.reconciliation_state = failsafe.active and "failsafe_open"
+    or adguard_applied and firewall_applied and "applied"
+    or "degraded"
   return snapshot, nil
 end
 

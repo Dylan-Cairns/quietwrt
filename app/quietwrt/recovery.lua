@@ -2,10 +2,7 @@ local context_helpers = require("quietwrt.context")
 local enforcement = require("quietwrt.enforcement")
 local firewall = require("quietwrt.firewall")
 local lists_store = require("quietwrt.lists_store")
-local platform = require("quietwrt.platform")
 local rules = require("quietwrt.rules")
-local schema = require("quietwrt.schema")
-local settings_store = require("quietwrt.settings_store")
 local util = require("quietwrt.util")
 
 local M = {}
@@ -14,11 +11,15 @@ local function marker_path(context)
   return context.paths.failsafe_marker_path
 end
 
-local function marker_content(reason, warnings)
+local function marker_content(reason, warnings, boot_id)
   local lines = {
     "QuietWrt entered failsafe-open mode.",
     "Reason: " .. tostring(reason or "Unknown failure."),
   }
+
+  if boot_id ~= nil and boot_id ~= "" then
+    table.insert(lines, "Boot-ID: " .. tostring(boot_id))
+  end
 
   for _, warning in ipairs(warnings or {}) do
     table.insert(lines, "Warning: " .. tostring(warning))
@@ -43,11 +44,31 @@ function M.read_marker(context)
   end
 
   local reason = content:match("Reason:%s*([^\n]+)") or util.trim(content)
+  local boot_id = content:match("Boot%-ID:%s*([^\n]+)")
   return {
     active = true,
     reason = reason ~= "" and reason or "QuietWrt entered failsafe-open mode.",
+    boot_id = boot_id and util.trim(boot_id) or nil,
     content = content,
   }
+end
+
+function M.current_boot_id(context)
+  return util.trim(context.env.read_file(context.paths.boot_id_path) or "")
+end
+
+function M.is_latched_for_current_boot(context, marker)
+  marker = marker or M.read_marker(context)
+  if not marker.active then
+    return false
+  end
+
+  local current_boot_id = M.current_boot_id(context)
+  if marker.boot_id == nil or marker.boot_id == "" or current_boot_id == "" then
+    return true
+  end
+
+  return marker.boot_id == current_boot_id
 end
 
 function M.clear_marker(context)
@@ -64,30 +85,19 @@ function M.clear_marker(context)
   return true, nil
 end
 
-function M.write_marker(context, reason, warnings)
+function M.write_marker(context, reason, warnings, boot_id)
   local ok, err = context_helpers.ensure_data_dir(context.env, context.paths)
   if not ok then
-    return false, err
+    return false, err, false
   end
 
-  return context_helpers.write_atomic(context.env, marker_path(context), marker_content(reason, warnings))
-end
-
-local function disabled_settings(context)
-  local settings = nil
-  if settings_store.detect_installed(context) then
-    settings = settings_store.read_settings(context, true)
+  local content = marker_content(reason, warnings, boot_id)
+  if context.env.read_file(marker_path(context)) == content then
+    return true, nil, false
   end
 
-  if settings == nil then
-    settings = settings_store.default_install_settings()
-  end
-
-  for _, toggle in ipairs(schema.TOGGLES) do
-    settings[toggle.key] = false
-  end
-  settings.schema_version = schema.SCHEMA_VERSION
-  return settings
+  local saved, save_error = context_helpers.write_atomic(context.env, marker_path(context), content)
+  return saved, save_error, saved
 end
 
 local function clear_adguard_rules_if_readable(context)
@@ -107,33 +117,33 @@ local function clear_adguard_rules_if_readable(context)
   end
 
   local compiled_rules = rules.compile_active_rules({}, {}, passthrough_rules)
-  local ok, err = enforcement.apply_rules(context, parsed_config, compiled_rules)
+  local ok, err, changed = enforcement.apply_rules(context, parsed_config, compiled_rules)
   if not ok then
     return false, err
   end
 
-  return true, nil, "cleared"
+  return true, nil, changed and "cleared" or "unchanged"
 end
 
 function M.enter_failsafe_open(context, reason)
   local warnings = {}
 
-  local firewall_ok, firewall_error = firewall.clear_managed(context)
+  local firewall_ok, firewall_error, firewall_changed = firewall.clear_managed(context)
   if not firewall_ok then
     table.insert(warnings, firewall_error)
   end
 
-  local settings_ok, settings_error = settings_store.persist_settings(context, disabled_settings(context))
-  if not settings_ok then
-    table.insert(warnings, settings_error)
-  end
-
-  local adguard_ok, adguard_error = clear_adguard_rules_if_readable(context)
+  local adguard_ok, adguard_error, adguard_state = clear_adguard_rules_if_readable(context)
   if not adguard_ok then
     table.insert(warnings, adguard_error)
   end
 
-  local marker_ok, marker_error = M.write_marker(context, reason, warnings)
+  local marker_ok, marker_error, marker_changed = M.write_marker(
+    context,
+    reason,
+    warnings,
+    M.current_boot_id(context)
+  )
   if not marker_ok then
     table.insert(warnings, marker_error)
   end
@@ -146,60 +156,9 @@ function M.enter_failsafe_open(context, reason)
     failsafe_open = true,
     reason = reason,
     warnings = warnings,
+    changed = firewall_changed == true or adguard_state == "cleared" or marker_changed == true,
+    boot_id = M.current_boot_id(context),
   }
-end
-
-function M.validate_boot_state(context)
-  local install_state = settings_store.read_install_state(context)
-  if not install_state.installed then
-    if install_state.settings_path_present then
-      return false, "QuietWrt settings are incomplete or use an unsupported schema version."
-    end
-
-    return true, nil
-  end
-
-  local settings, settings_error = settings_store.read_settings(context, true)
-  if not settings then
-    return false, settings_error
-  end
-
-  local parsed_config, config_error = enforcement.read_state(context)
-  if not parsed_config then
-    return false, config_error
-  end
-
-  local lists, list_error = lists_store.load(context, parsed_config, {
-    installed = true,
-    allow_bootstrap = false,
-  })
-  if not lists then
-    return false, list_error
-  end
-
-  local platform_ok, platform_error = platform.require_ready(context)
-  if not platform_ok then
-    return false, platform_error
-  end
-
-  return true, nil
-end
-
-function M.boot_check(context)
-  local healthy, failure = M.validate_boot_state(context)
-  if healthy then
-    M.clear_marker(context)
-    return true, {
-      healthy = true,
-    }
-  end
-
-  local opened, result = M.enter_failsafe_open(context, failure)
-  if not opened then
-    return false, result
-  end
-
-  return true, result
 end
 
 return M

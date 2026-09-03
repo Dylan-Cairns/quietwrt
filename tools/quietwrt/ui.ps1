@@ -24,6 +24,7 @@ function Show-QuietWrtStatus {
 
     Write-Host "  Protection: $protection"
     Write-Host "  Enforcement ready: $(if ($Status.enforcement_ready) { 'yes' } else { 'no' })"
+    Write-Host "  Reconciliation state: $($Status.reconciliation_state)"
     Write-Host "  Always blocklist: $(if ($Status.always_enabled) { 'enabled' } else { 'disabled' })"
 
     foreach ($definition in (Get-QuietWrtScheduleDefinitions)) {
@@ -47,6 +48,8 @@ function Show-QuietWrtStatus {
         }
     }
     Write-Host "  Active rules: $($Status.active_rule_count)"
+    Write-Host "  Desired active rules: $($Status.desired_active_rule_count)"
+    Write-Host "  Effective active rules: $($Status.effective_active_rule_count)"
     Write-Host "  DNS intercept hardening: $(if ($Status.hardening.dns_intercept) { 'yes' } else { 'no' })"
     Write-Host "  DoT blocking hardening: $(if ($Status.hardening.dot_block) { 'yes' } else { 'no' })"
     Write-Host "  Wired curfew rule ready: $(if ($Status.hardening.wired_curfew) { 'yes' } else { 'no' })"

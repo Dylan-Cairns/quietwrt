@@ -240,3 +240,31 @@ function TestApp:test_post_enable_toggle_rejects_unknown_toggle()
   lu.assertEquals(#fixture.commands, 0)
   fixture.cleanup()
 end
+
+function TestApp:test_post_enable_toggle_cannot_bypass_same_boot_failsafe_latch()
+  local fixture = mutable_installed_fixture({
+    ["uci -q get quietwrt.settings.after_work_enabled"] = "0",
+  })
+  helper.write_file(
+    fixture.paths.failsafe_marker_path,
+    "QuietWrt entered failsafe-open mode.\nReason: previous failure\nBoot-ID: test-boot-id\n"
+  )
+
+  local body = "action=enable_toggle&toggle_name=after_work"
+  local output = capture_cgi({
+    REQUEST_METHOD = "POST",
+    CONTENT_TYPE = "application/x-www-form-urlencoded",
+    CONTENT_LENGTH = tostring(#body),
+    SCRIPT_NAME = "/cgi-bin/quietwrt",
+    STDIN = body,
+  }, {
+    env = fixture.env,
+    paths = fixture.paths,
+  })
+
+  lu.assertStrContains(output, "Status: 303 See Other")
+  lu.assertStrContains(output, "kind=error")
+  lu.assertStrContains(output, "latched%20in%20failsafe-open%20mode")
+  lu.assertEquals(#fixture.commands, 0)
+  fixture.cleanup()
+end

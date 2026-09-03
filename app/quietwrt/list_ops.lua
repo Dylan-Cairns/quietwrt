@@ -1,7 +1,7 @@
-local apply_engine = require("quietwrt.apply_engine")
 local archive = require("quietwrt.archive")
 local enforcement = require("quietwrt.enforcement")
 local lists_store = require("quietwrt.lists_store")
+local reconciler = require("quietwrt.reconciler")
 local rules = require("quietwrt.rules")
 local schema = require("quietwrt.schema")
 local settings_store = require("quietwrt.settings_store")
@@ -10,9 +10,16 @@ local util = require("quietwrt.util")
 local M = {}
 
 local function apply_current_mode(context)
-  return apply_engine.apply_mode(context, {
-    require_installed = true,
-  })
+  local ok, result = reconciler.reconcile(context)
+  if not ok then
+    return false, result
+  end
+
+  if result.failsafe_open then
+    return false, "QuietWrt entered failsafe-open mode: " .. tostring(result.reason)
+  end
+
+  return true, result
 end
 
 local function restore_previous_lists(context, previous_lists)

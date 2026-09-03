@@ -5,6 +5,14 @@ local util = require("quietwrt.util")
 
 local M = {}
 
+M.RUNTIME_MANAGED_CHECK_COMMAND = "iptables-save 2>/dev/null | grep -E 'QuietWrt-(Intercept-DNS|Deny-DoT|Internet-Curfew)'"
+
+local RUNTIME_RULE_NAMES = {
+  dns = "QuietWrt-Intercept-DNS",
+  dot = "QuietWrt-Deny-DoT",
+  curfew = "QuietWrt-Internet-Curfew",
+}
+
 local function uci_unquote(value)
   local text = util.trim(value)
   if text:sub(1, 1) == "'" and text:sub(-1) == "'" then
@@ -150,8 +158,47 @@ function M.commit_snapshot(context, snapshot)
   return false, "Firewall update failed while running: " .. failed_command
 end
 
+local function runtime_output(context)
+  return context.env.capture(M.RUNTIME_MANAGED_CHECK_COMMAND) or ""
+end
+
+function M.runtime_matches_snapshot(context, snapshot)
+  snapshot = snapshot or {}
+  local output = runtime_output(context)
+  local expected = {
+    dns = snapshot.quietwrt_dns_int ~= nil,
+    dot = snapshot.quietwrt_dot_fwd ~= nil,
+    curfew = snapshot.quietwrt_curfew ~= nil
+      and tostring(snapshot.quietwrt_curfew.enabled or "1") ~= "0",
+  }
+
+  for key, rule_name in pairs(RUNTIME_RULE_NAMES) do
+    local present = output:find(rule_name, 1, true) ~= nil
+    if present ~= expected[key] then
+      return false
+    end
+  end
+
+  return true
+end
+
+function M.runtime_managed_present(context)
+  local output = runtime_output(context)
+  return util.trim(output) ~= ""
+end
+
 function M.clear_managed(context)
-  return M.commit_snapshot(context, {})
+  local current = M.capture_snapshot(context)
+  if M.snapshots_equal(current, {}) and not M.runtime_managed_present(context) then
+    return true, nil, false
+  end
+
+  local ok, err = M.commit_snapshot(context, {})
+  if not ok then
+    return false, err, false
+  end
+
+  return true, nil, true
 end
 
 return M

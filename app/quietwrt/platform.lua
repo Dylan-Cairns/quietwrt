@@ -16,6 +16,12 @@ M.CAPTURE_COMMANDS = {
   physdev = "iptables -m physdev -h >/dev/null 2>&1 && echo ready",
 }
 
+local RETRYABLE_ERRORS = {
+  [M.LAN_DEVICE .. " is not attached to " .. M.BRIDGE_DEVICE .. "."] = true,
+  ["The iptables physdev match is unavailable."] = true,
+  ["Could not enable bridge iptables processing."] = true,
+}
+
 local function platform_error(context)
   local board_output = context.env.capture(M.CAPTURE_COMMANDS.board) or ""
   local board_name = board_output:match('"board_name"%s*:%s*"([^"]+)"')
@@ -77,6 +83,15 @@ function M.require_ready(context)
   return true, nil
 end
 
+function M.is_retryable_error(err)
+  local message = tostring(err or "")
+  if RETRYABLE_ERRORS[message] then
+    return true
+  end
+
+  return message:find("Could not enable bridge iptables processing.", 1, true) == 1
+end
+
 local function restore_config_file(context, snapshot)
   if snapshot.config_present then
     return context_helpers.write_atomic(
@@ -117,7 +132,8 @@ function M.prepare(context)
     end
   end
 
-  if not context.env.write_file(context.paths.bridge_netfilter_runtime_path, "1\n") then
+  if snapshot.runtime_value ~= "1"
+      and not context.env.write_file(context.paths.bridge_netfilter_runtime_path, "1\n") then
     local _, restore_error = restore_config_file(context, snapshot)
     if restore_error then
       return false, "Could not enable bridge iptables processing. " .. restore_error

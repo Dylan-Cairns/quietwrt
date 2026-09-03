@@ -14,6 +14,7 @@ function New-QuietWrtStatusPlaceholder {
         router_time = $null
         protection_enabled = $null
         enforcement_ready = $false
+        reconciliation_state = $(if ($Installed) { 'unknown' } else { 'uninstalled' })
         always_enabled = $false
         workday_enabled = $false
         after_work_enabled = $false
@@ -30,6 +31,8 @@ function New-QuietWrtStatusPlaceholder {
         after_work_count = 0
         password_vault_count = 0
         active_rule_count = 0
+        desired_active_rule_count = 0
+        effective_active_rule_count = 0
         schedule = [pscustomobject]$schedule
         hardening = [pscustomobject]@{
             dns_intercept = $false
@@ -117,6 +120,13 @@ function Complete-QuietWrtStatus {
 
     foreach ($property in $Status.PSObject.Properties) {
         $merged | Add-Member -NotePropertyName $property.Name -NotePropertyValue $property.Value -Force
+    }
+
+    if (-not $Status.PSObject.Properties['desired_active_rule_count']) {
+        $merged.desired_active_rule_count = $merged.active_rule_count
+    }
+    if (-not $Status.PSObject.Properties['effective_active_rule_count']) {
+        $merged.effective_active_rule_count = $merged.active_rule_count
     }
 
     $mergedSchedule = [ordered]@{}

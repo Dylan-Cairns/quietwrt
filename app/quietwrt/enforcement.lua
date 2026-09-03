@@ -52,7 +52,7 @@ function M.enforcement_error(context, parsed_config)
   end
 
   return "Could not confirm that AdGuard Home protection is enabled in " .. context.paths.config_path
-    .. ". QuietWrt fails closed until it is enabled."
+    .. ". QuietWrt cannot enforce policy until it is enabled."
 end
 
 function M.is_ready(context, parsed_config)
@@ -82,6 +82,10 @@ function M.restore_config(context, content)
 end
 
 function M.apply_rules(context, parsed_config, compiled_rules)
+  if util.arrays_equal(parsed_config.rules, compiled_rules) then
+    return true, nil, false
+  end
+
   local updated_config = adguard.serialize_config(parsed_config, compiled_rules)
   return apply_config(context, parsed_config.content, updated_config)
 end

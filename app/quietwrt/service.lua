@@ -31,6 +31,10 @@ function M.boot_check(context)
   return operations.boot_check(context)
 end
 
+function M.recover(context)
+  return operations.recover(context)
+end
+
 function M.set_toggle(context, toggle_name, enabled)
   return operations.set_toggle(context, toggle_name, enabled)
 end

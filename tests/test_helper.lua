@@ -195,6 +195,7 @@ function M.make_context(overrides)
     iptables_physdev_extension_path = M.join_path(root, "usr", "lib", "iptables", "libxt_physdev.so"),
     lock_dir = M.join_path(root, "quietwrt.lock"),
     failsafe_marker_path = M.join_path(data_dir, "failsafe-open.txt"),
+    boot_id_path = M.join_path(root, "proc", "sys", "kernel", "random", "boot_id"),
   }
 
   assert(M.create_dirs({
@@ -207,11 +208,13 @@ function M.make_context(overrides)
     M.join_path(root, "etc", "rc.d"),
     M.join_path(root, "etc", "sysctl.d"),
     M.join_path(root, "proc", "sys", "net", "bridge"),
+    M.join_path(root, "proc", "sys", "kernel", "random"),
     M.join_path(root, "usr", "lib", "iptables"),
   }), "failed to create fixture directory tree for " .. root)
 
   assert(M.write_file(paths.bridge_netfilter_config_path, "net.bridge.bridge-nf-call-iptables=1\n"))
   assert(M.write_file(paths.bridge_netfilter_runtime_path, "1\n"))
+  assert(M.write_file(paths.boot_id_path, "test-boot-id\n"))
   assert(M.write_file(paths.iptables_physdev_extension_path, "test-extension\n"))
 
   local command_log = {}
@@ -242,7 +245,7 @@ function M.make_context(overrides)
       os.remove(target)
       return os.rename(source, target)
     end,
-    remove_file = os.remove,
+    remove_file = overrides.remove_file or os.remove,
     file_exists = M.path_exists,
     ensure_dir = function(path)
       return M.create_dir(path)

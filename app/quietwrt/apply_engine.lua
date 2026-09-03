@@ -31,7 +31,8 @@ local function reconcile_firewall(context, activity)
   end
 
   local desired_firewall = firewall.desired_snapshot(curfew_enabled)
-  if firewall.snapshots_equal(previous_firewall, desired_firewall) then
+  if firewall.snapshots_equal(previous_firewall, desired_firewall)
+      and firewall.runtime_matches_snapshot(context, desired_firewall) then
     return true, {
       changed = false,
       previous = previous_firewall,

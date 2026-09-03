@@ -91,6 +91,7 @@ function M.default_paths()
     iptables_physdev_extension_path = "/usr/lib/iptables/libxt_physdev.so",
     lock_dir = "/tmp/quietwrt.lock",
     failsafe_marker_path = data_dir .. "/failsafe-open.txt",
+    boot_id_path = "/proc/sys/kernel/random/boot_id",
   }
 end
 

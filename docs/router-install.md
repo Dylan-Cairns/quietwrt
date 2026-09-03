@@ -85,7 +85,7 @@ Fresh installs currently default to:
 
 This keeps full-internet lockouts off until you explicitly enable them after confirming the rest of the install behaves as expected.
 
-If `AdGuard Home` protection is disabled, install now fails closed instead of reporting a healthy QuietWrt install.
+If `AdGuard Home` protection is disabled, installation is rejected instead of reporting a healthy QuietWrt install.
 
 ## 4. Daily Control Menu
 
@@ -142,27 +142,29 @@ Fresh installs default to these windows:
 - `19:00` to `04:00`: wired internet off when overnight blocking is enabled
 - Saturday: wired internet off all day when Saturday blockout is enabled
 
-QuietWrt reconciles state in three ways:
+QuietWrt uses the same locked reconciliation operation whenever an installed policy is applied:
 
-- immediately during install/update
+- after list, toggle, or schedule changes
 - on boot through `/etc/init.d/quietwrt`
 - through cron at each configured window boundary and every `10` minutes as a backstop
+
+Install/update uses a separate transactional bootstrap around the same policy-application engine.
 
 The Saturday blockout relies on the recurring `10` minute backstop instead of adding day-specific cron entries, so start/end changes around midnight can drift by up to about `10` minutes.
 
 State-changing operations are serialized with a router-side lock at `/tmp/quietwrt.lock`. This keeps overlapping cron, boot, web, and CLI actions from applying state at the same time.
 
-Sync reconciles the full-internet curfew firewall rule before touching AdGuard Home, so an unreadable AdGuard config cannot keep a stale Saturday or overnight curfew enabled.
+Reconciliation validates desired state, repairs the bridge-netfilter runtime it owns, and then applies AdGuard Home and firewall state. If validation or application fails, the safe-open path removes the full-internet curfew before touching AdGuard Home so an unreadable AdGuard config cannot keep a stale Saturday or overnight curfew enabled.
 
 ## 7. Boot Failsafe
 
-Before boot sync, QuietWrt runs:
+At boot, the procd-managed QuietWrt one-shot service waits `15` seconds and runs:
 
 ```sh
 /usr/bin/quietwrtctl boot-check
 ```
 
-The boot check validates QuietWrt-owned control-plane state:
+This is the same reconciliation used by `sync`. It first validates persistent state, then reapplies QuietWrt's managed bridge-netfilter sysctl and retries transient platform readiness for up to about `30` seconds before applying policy:
 
 - AdGuard Home config is readable
 - QuietWrt UCI settings are valid
@@ -170,15 +172,23 @@ The boot check validates QuietWrt-owned control-plane state:
 - the router is the supported `glinet,mt3000-snand` board with `eth1` attached to `br-lan`
 - fw3/iptables legacy, the physdev match, and bridge-netfilter configuration are ready
 
-If those checks fail, QuietWrt enters failsafe-open mode. It removes the managed firewall sections, disables all QuietWrt toggles, clears QuietWrt blocking rules from AdGuard Home when the AdGuard config is readable, and writes:
+If validation, platform preparation, or policy application fails, QuietWrt enters failsafe-open mode. It removes the managed firewall sections and clears QuietWrt blocking rules from AdGuard Home when the AdGuard config is readable, but preserves the saved toggle choices so they can be restored after recovery. It writes:
 
 ```text
 /etc/quietwrt/failsafe-open.txt
 ```
 
-Failsafe-open is for corrupt or unreadable QuietWrt state only. A normal reboot during a valid Saturday blockout or overnight lockout does not disable restrictions.
+The marker records the current kernel boot ID. Once failsafe opens, it remains latched for the rest of that boot. Recurring cron syncs idempotently maintain the open state and cannot recreate QuietWrt restrictions, even if the original failure later disappears. This preserves router and internet access long enough for recovery.
 
-While the marker exists, normal sync keeps QuietWrt firewall restrictions removed instead of recreating them. A successful install/update or a healthy later boot check clears the marker.
+On a later boot, the kernel boot ID is different, so boot reconciliation may repair the problem, apply the complete saved policy, and then clear the marker. The marker is cleared only after both AdGuard Home and firewall application succeed. A successful authenticated install/update also clears it.
+
+To deliberately attempt recovery during the same boot over SSH, run:
+
+```sh
+/usr/bin/quietwrtctl recover
+```
+
+The LAN web page cannot perform same-boot recovery. While failsafe is latched, its mutation operations are rejected. A legacy marker without a boot ID is conservatively latched for the current boot; safe-open maintenance stamps it with the current boot ID so a later boot can recover normally.
 
 ## 8. Managed Router State
 
@@ -239,7 +249,7 @@ Rules to keep in mind:
 
 - `always-blocked.txt`, `workday-blocked.txt`, `after-work-blocked.txt`, and `password-vault-blocked.txt` must contain canonical lowercase hostnames
 - `passthrough-rules.txt` is for non-block AdGuard rules that should be preserved
-- bad manual edits fail closed; QuietWrt will report an error instead of silently rebuilding lossy state
+- bad manual edits are reported and trigger failsafe-open instead of silently rebuilding lossy state
 
 The local web page is append-only by design:
 
@@ -273,6 +283,7 @@ Useful direct commands:
 /usr/bin/quietwrtctl install
 /usr/bin/quietwrtctl boot-check
 /usr/bin/quietwrtctl sync
+/usr/bin/quietwrtctl recover
 /usr/bin/quietwrtctl status
 /usr/bin/quietwrtctl status --json
 /usr/bin/quietwrtctl set always on
@@ -296,6 +307,5 @@ Useful direct commands:
 /usr/bin/quietwrtctl restore --after-work /path/to/quietwrt-after-work-YYYY-MM-DD-HHMMSS.txt
 /usr/bin/quietwrtctl restore --password-vault /path/to/quietwrt-password-vault-YYYY-MM-DD-HHMMSS.txt
 cat /tmp/quietwrt-adguard-restart.log
-cat /tmp/quietwrt-boot-check.log
-cat /tmp/quietwrt-boot-sync.log
+cat /tmp/quietwrt-boot-reconcile.log
 ```

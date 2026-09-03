@@ -1,6 +1,7 @@
 local helper = require("test_helper")
 local lu = require("luaunit")
 local archive = require("quietwrt.archive")
+local firewall = require("quietwrt.firewall")
 local service = require("quietwrt.service")
 
 TestServiceIntegration = {}
@@ -45,6 +46,8 @@ local function installed_fixture(options)
 
   local fixture = helper.make_context({
     now = options.now,
+    sleep = options.sleep,
+    remove_file = options.remove_file,
     capture = options.capture or function(command)
       return capture_state[command] or ""
     end,
@@ -62,6 +65,24 @@ local function installed_fixture(options)
 
   fixture.capture_state = capture_state
   return fixture
+end
+
+local function managed_firewall_capture(curfew_enabled, runtime_output)
+  local capture = {
+    [firewall.RUNTIME_MANAGED_CHECK_COMMAND] = runtime_output or "",
+  }
+  for section_name, section in pairs(firewall.desired_snapshot(curfew_enabled)) do
+    local lines = {
+      "firewall." .. section_name .. "=" .. section._type,
+    }
+    for option_name, value in pairs(section) do
+      if option_name ~= "_type" then
+        table.insert(lines, "firewall." .. section_name .. "." .. option_name .. "='" .. tostring(value) .. "'")
+      end
+    end
+    capture["uci -q show firewall." .. section_name] = table.concat(lines, "\n")
+  end
+  return capture
 end
 
 function TestServiceIntegration:test_install_bootstraps_lists_sets_default_schedule_and_marks_installation()
@@ -223,8 +244,9 @@ function TestServiceIntegration:test_partial_missing_list_state_fails_closed_wit
   })
 
   local ok, err = service.apply_current_mode(context)
-  lu.assertFalse(ok)
-  lu.assertStrContains(err, "incomplete")
+  lu.assertTrue(ok)
+  lu.assertTrue(err.failsafe_open)
+  lu.assertStrContains(err.reason, "incomplete")
   lu.assertEquals(helper.read_file(fixture.paths.always_list_path), "always.com\n")
   lu.assertEquals(helper.read_file(fixture.paths.workday_list_path), "work.com\n")
   lu.assertNil(helper.read_file(fixture.paths.after_work_list_path))
@@ -247,9 +269,10 @@ function TestServiceIntegration:test_invalid_manual_host_line_is_rejected()
   })
 
   local ok, err = service.apply_current_mode(context)
-  lu.assertFalse(ok)
-  lu.assertStrContains(err, "always-blocked.txt")
-  lu.assertStrContains(err, "line 1")
+  lu.assertTrue(ok)
+  lu.assertTrue(err.failsafe_open)
+  lu.assertStrContains(err.reason, "always-blocked.txt")
+  lu.assertStrContains(err.reason, "line 1")
   fixture.cleanup()
 end
 
@@ -278,8 +301,9 @@ function TestServiceIntegration:test_firewall_failure_restores_previous_state()
   })
 
   local ok, err = service.apply_current_mode(context)
-  lu.assertFalse(ok)
-  lu.assertStrContains(err, "Firewall update failed")
+  lu.assertTrue(ok)
+  lu.assertTrue(err.failsafe_open)
+  lu.assertStrContains(err.reason, "Firewall update failed")
   lu.assertEquals(helper.read_file(fixture.paths.config_path), original)
   fixture.cleanup()
 end
@@ -356,8 +380,9 @@ function TestServiceIntegration:test_apply_current_mode_fails_closed_when_adguar
   })
 
   local ok, err = service.apply_current_mode(context)
-  lu.assertFalse(ok)
-  lu.assertStrContains(err, "protection is disabled")
+  lu.assertTrue(ok)
+  lu.assertTrue(err.failsafe_open)
+  lu.assertStrContains(err.reason, "protection is disabled")
   fixture.cleanup()
 end
 
@@ -429,6 +454,39 @@ function TestServiceIntegration:test_status_json_reports_disabled_protection_and
   fixture.cleanup()
 end
 
+function TestServiceIntegration:test_status_reports_applied_when_desired_and_effective_policy_match()
+  local fixture = installed_fixture({
+    capture_map = managed_firewall_capture(
+      false,
+      table.concat({
+        "-A zone_lan_prerouting -m comment --comment QuietWrt-Intercept-DNS -j DNAT",
+        "-A zone_lan_forward -m comment --comment QuietWrt-Deny-DoT -j reject",
+      }, "\n")
+    ),
+  })
+  helper.write_config(fixture.paths.config_path, {
+    "||example.com^",
+  })
+  helper.write_file(fixture.paths.always_list_path, "example.com\n")
+  helper.write_file(fixture.paths.workday_list_path, "")
+  helper.write_file(fixture.paths.after_work_list_path, "")
+  helper.write_file(fixture.paths.password_vault_list_path, "")
+  helper.write_file(fixture.paths.passthrough_rules_path, "")
+
+  local ok, output = service.status(service.new_context({
+    env = fixture.env,
+    paths = fixture.paths,
+  }), {
+    json = true,
+  })
+
+  lu.assertTrue(ok)
+  lu.assertStrContains(output, '"reconciliation_state":"applied"')
+  lu.assertStrContains(output, '"desired_active_rule_count":1')
+  lu.assertStrContains(output, '"effective_active_rule_count":1')
+  fixture.cleanup()
+end
+
 function TestServiceIntegration:test_status_json_contract_exposes_router_time_schedule_windows_hardening_and_warnings()
   local fixture = installed_fixture({
     now = function()
@@ -481,6 +539,9 @@ function TestServiceIntegration:test_status_json_contract_exposes_router_time_sc
   lu.assertStrContains(output, '"start":"1900"')
   lu.assertStrContains(output, '"display_start":"19:00"')
   lu.assertStrContains(output, '"hardening":{')
+  lu.assertStrContains(output, '"reconciliation_state":"degraded"')
+  lu.assertStrContains(output, '"desired_active_rule_count":2')
+  lu.assertStrContains(output, '"effective_active_rule_count":0')
   lu.assertStrContains(output, '"dns_intercept":false')
   lu.assertStrContains(output, '"dot_block":false')
   lu.assertStrContains(output, '"overnight_rule":false')
@@ -524,7 +585,7 @@ function TestServiceIntegration:test_saturday_blockout_enables_curfew_firewall_r
   fixture.cleanup()
 end
 
-function TestServiceIntegration:test_active_curfew_fails_open_when_bridge_netfilter_is_not_ready()
+function TestServiceIntegration:test_active_curfew_repairs_bridge_netfilter_before_applying()
   local fixture = installed_fixture({
     now = function()
       return { hour = 12, min = 0, wday = 7 }
@@ -534,6 +595,12 @@ function TestServiceIntegration:test_active_curfew_fails_open_when_bridge_netfil
       ["uci -q get quietwrt.settings.saturday_blockout_enabled"] = "1",
     },
   })
+  helper.write_config(fixture.paths.config_path, {})
+  helper.write_file(fixture.paths.always_list_path, "example.com\n")
+  helper.write_file(fixture.paths.workday_list_path, "")
+  helper.write_file(fixture.paths.after_work_list_path, "")
+  helper.write_file(fixture.paths.password_vault_list_path, "")
+  helper.write_file(fixture.paths.passthrough_rules_path, "")
   helper.write_file(fixture.paths.bridge_netfilter_runtime_path, "0\n")
 
   local context = service.new_context({
@@ -542,11 +609,10 @@ function TestServiceIntegration:test_active_curfew_fails_open_when_bridge_netfil
   })
   local ok, err = service.apply_current_mode(context)
 
-  lu.assertFalse(ok)
-  lu.assertStrContains(err, "Bridge iptables processing is not enabled")
+  lu.assertTrue(ok)
+  lu.assertEquals(helper.read_file(fixture.paths.bridge_netfilter_runtime_path), "1\n")
   local joined = table.concat(fixture.commands, "\n")
-  lu.assertStrContains(joined, "uci set firewall.quietwrt_curfew.enabled='0'")
-  lu.assertNil(joined:find("uci set firewall.quietwrt_curfew.enabled='1'", 1, true))
+  lu.assertStrContains(joined, "uci set firewall.quietwrt_curfew.enabled='1'")
   fixture.cleanup()
 end
 
@@ -558,6 +624,7 @@ function TestServiceIntegration:test_sync_disables_curfew_when_adguard_config_is
     capture_map = {
       ["uci -q get quietwrt.settings.overnight_enabled"] = "0",
       ["uci -q get quietwrt.settings.saturday_blockout_enabled"] = "1",
+      ["uci -q show firewall.quietwrt_curfew"] = "firewall.quietwrt_curfew=rule\nfirewall.quietwrt_curfew.enabled='1'",
     },
   })
 
@@ -574,11 +641,12 @@ function TestServiceIntegration:test_sync_disables_curfew_when_adguard_config_is
 
   local ok, err = service.apply_current_mode(context)
 
-  lu.assertFalse(ok)
-  lu.assertStrContains(err, "Could not read")
+  lu.assertTrue(ok)
+  lu.assertTrue(err.failsafe_open)
+  lu.assertStrContains(err.reason, "Could not read")
 
   local joined = table.concat(fixture.commands, "\n")
-  lu.assertStrContains(joined, "uci set firewall.quietwrt_curfew.enabled='0'")
+  lu.assertStrContains(joined, "uci -q delete firewall.quietwrt_curfew >/dev/null 2>&1 || true")
   fixture.cleanup()
 end
 
@@ -606,13 +674,41 @@ function TestServiceIntegration:test_boot_check_enters_failsafe_open_when_adguar
   lu.assertTrue(result.failsafe_open)
   lu.assertStrContains(result.reason, "Could not read")
   lu.assertStrContains(helper.read_file(fixture.paths.failsafe_marker_path), "Could not read")
+  lu.assertStrContains(helper.read_file(fixture.paths.failsafe_marker_path), "Boot-ID: test-boot-id")
 
   local joined = table.concat(fixture.commands, "\n")
-  lu.assertStrContains(joined, "uci -q delete firewall.quietwrt_dns_int >/dev/null 2>&1 || true")
-  lu.assertStrContains(joined, "uci -q delete firewall.quietwrt_dot_fwd >/dev/null 2>&1 || true")
-  lu.assertStrContains(joined, "uci -q delete firewall.quietwrt_curfew >/dev/null 2>&1 || true")
-  lu.assertStrContains(joined, "uci set quietwrt.settings.always_enabled='0'")
-  lu.assertStrContains(joined, "uci set quietwrt.settings.saturday_blockout_enabled='0'")
+  lu.assertNil(joined:find("restart-firewall", 1, true))
+  lu.assertNil(joined:find("uci set quietwrt.settings.always_enabled=", 1, true))
+  lu.assertNil(joined:find("uci set quietwrt.settings.saturday_blockout_enabled=", 1, true))
+  fixture.cleanup()
+end
+
+function TestServiceIntegration:test_boot_check_repairs_bridge_netfilter_and_clears_failsafe_marker()
+  local fixture = installed_fixture()
+
+  helper.write_config(fixture.paths.config_path, {})
+  helper.write_file(fixture.paths.always_list_path, "example.com\n")
+  helper.write_file(fixture.paths.workday_list_path, "")
+  helper.write_file(fixture.paths.after_work_list_path, "")
+  helper.write_file(fixture.paths.password_vault_list_path, "")
+  helper.write_file(fixture.paths.passthrough_rules_path, "")
+  helper.write_file(fixture.paths.bridge_netfilter_runtime_path, "0\n")
+  helper.write_file(fixture.paths.failsafe_marker_path, "Reason: previous boot was not ready\nBoot-ID: previous-boot\n")
+
+  local context = service.new_context({
+    env = fixture.env,
+    paths = fixture.paths,
+  })
+
+  local ok, result = service.boot_check(context)
+
+  lu.assertTrue(ok)
+  lu.assertTrue(result.healthy)
+  lu.assertEquals(helper.read_file(fixture.paths.bridge_netfilter_runtime_path), "1\n")
+  lu.assertNil(helper.read_file(fixture.paths.failsafe_marker_path))
+
+  local joined = table.concat(fixture.commands, "\n")
+  lu.assertNil(joined:find("uci set quietwrt.settings.always_enabled=", 1, true))
   fixture.cleanup()
 end
 
@@ -632,7 +728,7 @@ function TestServiceIntegration:test_boot_check_passes_during_valid_saturday_loc
   helper.write_file(fixture.paths.after_work_list_path, "")
   helper.write_file(fixture.paths.password_vault_list_path, "")
   helper.write_file(fixture.paths.passthrough_rules_path, "")
-  helper.write_file(fixture.paths.failsafe_marker_path, "stale marker\n")
+  helper.write_file(fixture.paths.failsafe_marker_path, "Reason: stale marker\nBoot-ID: previous-boot\n")
 
   local context = service.new_context({
     env = fixture.env,
@@ -644,7 +740,7 @@ function TestServiceIntegration:test_boot_check_passes_during_valid_saturday_loc
   lu.assertTrue(ok)
   lu.assertTrue(result.healthy)
   lu.assertNil(helper.read_file(fixture.paths.failsafe_marker_path))
-  lu.assertEquals(#fixture.commands, 0)
+  lu.assertTrue(#fixture.commands > 0)
   fixture.cleanup()
 end
 
@@ -679,7 +775,7 @@ end
 
 function TestServiceIntegration:test_sync_does_not_recreate_firewall_rules_while_failsafe_open()
   local fixture = installed_fixture()
-  helper.write_file(fixture.paths.failsafe_marker_path, "Reason: previous failure\n")
+  helper.write_file(fixture.paths.failsafe_marker_path, "Reason: previous failure\nBoot-ID: test-boot-id\n")
 
   local context = service.new_context({
     env = fixture.env,
@@ -688,12 +784,356 @@ function TestServiceIntegration:test_sync_does_not_recreate_firewall_rules_while
 
   local ok, err = service.apply_current_mode(context)
 
-  lu.assertFalse(ok)
-  lu.assertStrContains(err, "failsafe-open")
+  lu.assertTrue(ok)
+  lu.assertTrue(err.failsafe_open)
+  lu.assertStrContains(err.reason, "previous failure")
 
   local joined = table.concat(fixture.commands, "\n")
-  lu.assertStrContains(joined, "uci -q delete firewall.quietwrt_dns_int >/dev/null 2>&1 || true")
   lu.assertNil(joined:find("uci set firewall.quietwrt_dns_int='redirect'", 1, true))
+  lu.assertNil(joined:find("restart-firewall", 1, true))
+  fixture.cleanup()
+end
+
+function TestServiceIntegration:test_legacy_failsafe_marker_is_conservatively_latched()
+  local fixture = installed_fixture()
+  helper.write_file(fixture.paths.failsafe_marker_path, "Reason: legacy failure\n")
+
+  local ok, result = service.boot_check(service.new_context({
+    env = fixture.env,
+    paths = fixture.paths,
+  }))
+
+  lu.assertTrue(ok)
+  lu.assertTrue(result.failsafe_open)
+  lu.assertStrContains(helper.read_file(fixture.paths.failsafe_marker_path), "Boot-ID: test-boot-id")
+  fixture.cleanup()
+end
+
+function TestServiceIntegration:test_same_boot_failsafe_is_idempotent_across_cron_syncs()
+  local fixture = installed_fixture()
+  helper.write_config(fixture.paths.config_path, {
+    "||blocked.example^",
+  })
+  helper.write_file(fixture.paths.always_list_path, "Example.com\n")
+  helper.write_file(fixture.paths.workday_list_path, "")
+  helper.write_file(fixture.paths.after_work_list_path, "")
+  helper.write_file(fixture.paths.password_vault_list_path, "")
+  helper.write_file(fixture.paths.passthrough_rules_path, "")
+
+  local context = service.new_context({
+    env = fixture.env,
+    paths = fixture.paths,
+  })
+
+  local first_ok, first_result = service.apply_current_mode(context)
+  lu.assertTrue(first_ok)
+  lu.assertTrue(first_result.failsafe_open)
+  local command_count = #fixture.commands
+
+  local second_ok, second_result = service.apply_current_mode(context)
+  lu.assertTrue(second_ok)
+  lu.assertTrue(second_result.failsafe_open)
+  lu.assertEquals(#fixture.commands, command_count)
+  lu.assertFalse(second_result.changed)
+  fixture.cleanup()
+end
+
+function TestServiceIntegration:test_healthy_sync_is_idempotent_when_uci_and_runtime_match()
+  local fixture = installed_fixture({
+    capture_map = managed_firewall_capture(
+      false,
+      table.concat({
+        "-A zone_lan_prerouting -m comment --comment QuietWrt-Intercept-DNS -j DNAT",
+        "-A zone_lan_forward -m comment --comment QuietWrt-Deny-DoT -j reject",
+      }, "\n")
+    ),
+  })
+  helper.write_config(fixture.paths.config_path, {
+    "||example.com^",
+  })
+  helper.write_file(fixture.paths.always_list_path, "example.com\n")
+  helper.write_file(fixture.paths.workday_list_path, "")
+  helper.write_file(fixture.paths.after_work_list_path, "")
+  helper.write_file(fixture.paths.password_vault_list_path, "")
+  helper.write_file(fixture.paths.passthrough_rules_path, "")
+
+  local ok, result = service.apply_current_mode(service.new_context({
+    env = fixture.env,
+    paths = fixture.paths,
+  }))
+
+  lu.assertTrue(ok)
+  lu.assertTrue(result.healthy)
+  lu.assertEquals(#fixture.commands, 0)
+  fixture.cleanup()
+end
+
+function TestServiceIntegration:test_sync_repairs_missing_runtime_firewall_rules_even_when_uci_matches()
+  local fixture = installed_fixture({
+    capture_map = managed_firewall_capture(false, ""),
+  })
+  helper.write_config(fixture.paths.config_path, {
+    "||example.com^",
+  })
+  helper.write_file(fixture.paths.always_list_path, "example.com\n")
+  helper.write_file(fixture.paths.workday_list_path, "")
+  helper.write_file(fixture.paths.after_work_list_path, "")
+  helper.write_file(fixture.paths.password_vault_list_path, "")
+  helper.write_file(fixture.paths.passthrough_rules_path, "")
+
+  local ok, result = service.apply_current_mode(service.new_context({
+    env = fixture.env,
+    paths = fixture.paths,
+  }))
+
+  lu.assertTrue(ok)
+  lu.assertTrue(result.healthy)
+  lu.assertStrContains(table.concat(fixture.commands, "\n"), "restart-firewall")
+  fixture.cleanup()
+end
+
+function TestServiceIntegration:test_authenticated_recover_can_clear_same_boot_failsafe()
+  local fixture = installed_fixture()
+  helper.write_config(fixture.paths.config_path, {})
+  helper.write_file(fixture.paths.always_list_path, "example.com\n")
+  helper.write_file(fixture.paths.workday_list_path, "")
+  helper.write_file(fixture.paths.after_work_list_path, "")
+  helper.write_file(fixture.paths.password_vault_list_path, "")
+  helper.write_file(fixture.paths.passthrough_rules_path, "")
+  helper.write_file(
+    fixture.paths.failsafe_marker_path,
+    "QuietWrt entered failsafe-open mode.\nReason: previous failure\nBoot-ID: test-boot-id\n"
+  )
+
+  local context = service.new_context({
+    env = fixture.env,
+    paths = fixture.paths,
+  })
+  local ok, result = service.recover(context)
+
+  lu.assertTrue(ok)
+  lu.assertTrue(result.healthy)
+  lu.assertTrue(result.recovered)
+  lu.assertNil(helper.read_file(fixture.paths.failsafe_marker_path))
+  lu.assertStrContains(helper.read_file(fixture.paths.config_path), "||example.com^")
+  fixture.cleanup()
+end
+
+function TestServiceIntegration:test_unauthenticated_style_mutation_is_rejected_while_failsafe_is_latched()
+  local fixture = installed_fixture()
+  helper.write_file(
+    fixture.paths.failsafe_marker_path,
+    "QuietWrt entered failsafe-open mode.\nReason: previous failure\nBoot-ID: test-boot-id\n"
+  )
+
+  local context = service.new_context({
+    env = fixture.env,
+    paths = fixture.paths,
+  })
+  local ok, err = service.enable_toggle(context, "after_work")
+
+  lu.assertFalse(ok)
+  lu.assertStrContains(err, "latched in failsafe-open mode")
+  lu.assertEquals(#fixture.commands, 0)
+  fixture.cleanup()
+end
+
+function TestServiceIntegration:test_boot_retries_transient_platform_readiness_before_failsafe()
+  local capture_state = installed_capture_map()
+  local bridge_checks = 0
+  local sleeps = 0
+  local fixture = installed_fixture({
+    capture = function(command)
+      if command == 'basename "$(readlink -f /sys/class/net/eth1/brport/bridge 2>/dev/null)"' then
+        bridge_checks = bridge_checks + 1
+        if bridge_checks < 3 then
+          return ""
+        end
+      end
+      return capture_state[command] or ""
+    end,
+    sleep = function()
+      sleeps = sleeps + 1
+      return true
+    end,
+  })
+  helper.write_config(fixture.paths.config_path, {})
+  helper.write_file(fixture.paths.always_list_path, "example.com\n")
+  helper.write_file(fixture.paths.workday_list_path, "")
+  helper.write_file(fixture.paths.after_work_list_path, "")
+  helper.write_file(fixture.paths.password_vault_list_path, "")
+  helper.write_file(fixture.paths.passthrough_rules_path, "")
+
+  local ok, result = service.boot_check(service.new_context({
+    env = fixture.env,
+    paths = fixture.paths,
+  }))
+
+  lu.assertTrue(ok)
+  lu.assertTrue(result.healthy)
+  lu.assertEquals(sleeps, 2)
+  lu.assertNil(helper.read_file(fixture.paths.failsafe_marker_path))
+  fixture.cleanup()
+end
+
+function TestServiceIntegration:test_boot_enters_failsafe_after_bounded_platform_retries()
+  local capture_state = installed_capture_map()
+  local bridge_checks = 0
+  local sleeps = 0
+  local fixture = installed_fixture({
+    capture = function(command)
+      if command == 'basename "$(readlink -f /sys/class/net/eth1/brport/bridge 2>/dev/null)"' then
+        bridge_checks = bridge_checks + 1
+        return ""
+      end
+      return capture_state[command] or ""
+    end,
+    sleep = function()
+      sleeps = sleeps + 1
+      return true
+    end,
+  })
+  helper.write_config(fixture.paths.config_path, {})
+  helper.write_file(fixture.paths.always_list_path, "example.com\n")
+  helper.write_file(fixture.paths.workday_list_path, "")
+  helper.write_file(fixture.paths.after_work_list_path, "")
+  helper.write_file(fixture.paths.password_vault_list_path, "")
+  helper.write_file(fixture.paths.passthrough_rules_path, "")
+
+  local ok, result = service.boot_check(service.new_context({
+    env = fixture.env,
+    paths = fixture.paths,
+  }))
+
+  lu.assertTrue(ok)
+  lu.assertTrue(result.failsafe_open)
+  lu.assertEquals(bridge_checks, 7)
+  lu.assertEquals(sleeps, 6)
+  lu.assertStrContains(result.reason, "eth1 is not attached to br-lan")
+  lu.assertStrContains(helper.read_file(fixture.paths.failsafe_marker_path), "Boot-ID: test-boot-id")
+  fixture.cleanup()
+end
+
+function TestServiceIntegration:test_marker_clear_failure_returns_to_failsafe_open()
+  local blocked_marker_path = nil
+  local fixture = installed_fixture({
+    capture_map = {
+      [firewall.RUNTIME_MANAGED_CHECK_COMMAND] = "-A zone_lan_forward -m comment --comment QuietWrt-Internet-Curfew -j REJECT",
+    },
+    remove_file = function(path)
+      if path == blocked_marker_path then
+        return false
+      end
+      return os.remove(path)
+    end,
+  })
+  blocked_marker_path = fixture.paths.failsafe_marker_path
+  helper.write_config(fixture.paths.config_path, {})
+  helper.write_file(fixture.paths.always_list_path, "example.com\n")
+  helper.write_file(fixture.paths.workday_list_path, "")
+  helper.write_file(fixture.paths.after_work_list_path, "")
+  helper.write_file(fixture.paths.password_vault_list_path, "")
+  helper.write_file(fixture.paths.passthrough_rules_path, "")
+  helper.write_file(
+    fixture.paths.failsafe_marker_path,
+    "QuietWrt entered failsafe-open mode.\nReason: previous failure\nBoot-ID: test-boot-id\n"
+  )
+
+  local ok, result = service.recover(service.new_context({
+    env = fixture.env,
+    paths = fixture.paths,
+  }))
+
+  lu.assertTrue(ok)
+  lu.assertTrue(result.failsafe_open)
+  lu.assertStrContains(result.reason, "could not be cleared")
+  lu.assertStrContains(helper.read_file(fixture.paths.failsafe_marker_path), "could not be cleared")
+  lu.assertNil(helper.read_file(fixture.paths.config_path):find("||example.com%^"))
+  lu.assertStrContains(table.concat(fixture.commands, "\n"), "restart-firewall")
+  fixture.cleanup()
+end
+
+function TestServiceIntegration:test_failsafe_opens_firewall_before_clearing_adguard()
+  local fixture = installed_fixture({
+    capture_map = {
+      ["uci -q show firewall.quietwrt_dns_int"] = table.concat({
+        "firewall.quietwrt_dns_int=redirect",
+        "firewall.quietwrt_dns_int.name='QuietWrt-Intercept-DNS'",
+      }, "\n"),
+    },
+  })
+  helper.write_config(fixture.paths.config_path, {
+    "||blocked.example^",
+  })
+  helper.write_file(fixture.paths.always_list_path, "not a valid host\n")
+  helper.write_file(fixture.paths.workday_list_path, "")
+  helper.write_file(fixture.paths.after_work_list_path, "")
+  helper.write_file(fixture.paths.password_vault_list_path, "")
+  helper.write_file(fixture.paths.passthrough_rules_path, "")
+
+  local ok, result = service.boot_check(service.new_context({
+    env = fixture.env,
+    paths = fixture.paths,
+  }))
+
+  lu.assertTrue(ok)
+  lu.assertTrue(result.failsafe_open)
+  local joined = table.concat(fixture.commands, "\n")
+  local firewall_restart = assert(joined:find("restart-firewall", 1, true))
+  local adguard_restart = assert(joined:find("restart-adguard", 1, true))
+  lu.assertTrue(firewall_restart < adguard_restart)
+  fixture.cleanup()
+end
+
+function TestServiceIntegration:test_toggle_apply_failure_uses_unified_failsafe_reconciliation()
+  local fixture = installed_fixture({
+    execute = function(log, command)
+      table.insert(log, command)
+      if command == "restart-adguard" then
+        return 1
+      end
+      return 0
+    end,
+  })
+  helper.write_config(fixture.paths.config_path, {})
+  helper.write_file(fixture.paths.always_list_path, "example.com\n")
+  helper.write_file(fixture.paths.workday_list_path, "work.example\n")
+  helper.write_file(fixture.paths.after_work_list_path, "after.example\n")
+  helper.write_file(fixture.paths.password_vault_list_path, "vault.example\n")
+  helper.write_file(fixture.paths.passthrough_rules_path, "")
+
+  local ok, err = service.set_toggle(service.new_context({
+    env = fixture.env,
+    paths = fixture.paths,
+  }), "always", false)
+
+  lu.assertFalse(ok)
+  lu.assertStrContains(err, "failsafe-open")
+  lu.assertStrContains(helper.read_file(fixture.paths.failsafe_marker_path), "AdGuard Home restart failed")
+  lu.assertEquals(fixture.capture_state["uci -q get quietwrt.settings.always_enabled"], "1")
+  fixture.cleanup()
+end
+
+function TestServiceIntegration:test_failsafe_reloads_firewall_when_runtime_rules_are_stale()
+  local fixture = installed_fixture({
+    capture_map = {
+      [firewall.RUNTIME_MANAGED_CHECK_COMMAND] = "-A zone_lan_forward -m comment --comment QuietWrt-Internet-Curfew -j REJECT",
+    },
+  })
+  helper.write_file(fixture.paths.always_list_path, "example.com\n")
+  helper.write_file(fixture.paths.workday_list_path, "")
+  helper.write_file(fixture.paths.after_work_list_path, "")
+  helper.write_file(fixture.paths.password_vault_list_path, "")
+  helper.write_file(fixture.paths.passthrough_rules_path, "")
+
+  local ok, result = service.boot_check(service.new_context({
+    env = fixture.env,
+    paths = fixture.paths,
+  }))
+
+  lu.assertTrue(ok)
+  lu.assertTrue(result.failsafe_open)
+  lu.assertStrContains(table.concat(fixture.commands, "\n"), "restart-firewall")
   fixture.cleanup()
 end
 
