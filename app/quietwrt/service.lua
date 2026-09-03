@@ -23,6 +23,10 @@ function M.download_blocklists_archive(context, format)
   return operations.download_blocklists_archive(context, format)
 end
 
+function M.export_schedules(context)
+  return operations.export_schedules(context)
+end
+
 function M.install(context)
   return operations.install(context)
 end

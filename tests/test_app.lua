@@ -40,6 +40,27 @@ local function capture_cgi(env, options)
   return table.concat(chunks)
 end
 
+local function capture_cli(argv, options)
+  local original_write = io.write
+  local chunks = {}
+  io.write = function(...)
+    for index = 1, select("#", ...) do
+      table.insert(chunks, tostring(select(index, ...)))
+    end
+  end
+
+  local ok, exit_code = xpcall(function()
+    return app.run_cli(argv, options)
+  end, debug.traceback)
+  io.write = original_write
+
+  if not ok then
+    error(exit_code)
+  end
+
+  return exit_code, table.concat(chunks)
+end
+
 local function installed_capture_map()
   local capture = {}
   for command, value in pairs(helper.PLATFORM_CAPTURE) do
@@ -97,9 +118,7 @@ end
 
 function TestApp:test_get_download_zip_returns_attachment()
   local fixture = helper.make_context({
-    capture_map = {
-      ["uci -q get quietwrt.settings.schema_version"] = "5",
-    },
+    capture_map = installed_capture_map(),
   })
 
   helper.write_file(fixture.paths.always_list_path, "always.example\n")
@@ -295,5 +314,40 @@ function TestApp:test_post_enable_toggle_cannot_bypass_same_boot_failsafe_latch(
   lu.assertStrContains(output, "kind=error")
   lu.assertStrContains(output, "latched%20in%20failsafe-open%20mode")
   lu.assertEquals(#fixture.commands, 0)
+  fixture.cleanup()
+end
+
+function TestApp:test_cli_exports_and_restores_schedule_only_backup()
+  local fixture = mutable_installed_fixture({
+    ["uci -q get quietwrt.settings.workday_enabled"] = "0",
+    ["uci -q get quietwrt.settings.overnight_enabled"] = "0",
+  })
+  helper.write_config(fixture.paths.config_path, {})
+  helper.write_file(fixture.paths.always_list_path, "always.example\n")
+  helper.write_file(fixture.paths.workday_list_path, "")
+  helper.write_file(fixture.paths.after_work_list_path, "")
+  helper.write_file(fixture.paths.password_vault_list_path, "")
+  helper.write_file(fixture.paths.passthrough_rules_path, "")
+
+  local export_code, exported = capture_cli({ "export-schedules" }, {
+    env = fixture.env,
+    paths = fixture.paths,
+  })
+  lu.assertEquals(export_code, 0)
+  lu.assertStrContains(exported, "format=quietwrt-schedules\n")
+  lu.assertNil(exported:find("enabled", 1, true))
+
+  local schedule_path = helper.join_path(fixture.root, "restored-schedules.txt")
+  helper.write_file(schedule_path, exported:gsub("workday_start=0400", "workday_start=0500"))
+  local restore_code, restore_output = capture_cli({ "restore", "--schedules", schedule_path }, {
+    env = fixture.env,
+    paths = fixture.paths,
+  })
+
+  lu.assertEquals(restore_code, 0)
+  lu.assertStrContains(restore_output, "schedule timings; enable states preserved")
+  lu.assertEquals(fixture.capture_state["uci -q get quietwrt.settings.workday_start"], "0500")
+  lu.assertEquals(fixture.capture_state["uci -q get quietwrt.settings.workday_enabled"], "0")
+  lu.assertEquals(fixture.capture_state["uci -q get quietwrt.settings.overnight_enabled"], "0")
   fixture.cleanup()
 end

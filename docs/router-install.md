@@ -103,7 +103,7 @@ The local CLI keeps one SSH session plus an SCP-backed file transfer connection 
 9. Set after-work window
 10. Set password vault window
 11. Set overnight window
-12. Backup all blocklists to this PC
+12. Backup all blocklists and schedule timings to this PC
 13. Restore latest backup
 ```
 
@@ -119,6 +119,9 @@ Backup filenames are:
 - `quietwrt-workday-YYYY-MM-DD-HHMMSS.txt`
 - `quietwrt-after-work-YYYY-MM-DD-HHMMSS.txt`
 - `quietwrt-password-vault-YYYY-MM-DD-HHMMSS.txt`
+- `quietwrt-schedules-YYYY-MM-DD-HHMMSS.txt`
+
+The schedule file is versioned and contains only the start and end times for the workday, after-work, password-vault, and overnight windows. It does not contain enable/disable settings.
 
 The restore option:
 
@@ -127,10 +130,14 @@ The restore option:
 - chooses the newest matching `quietwrt-workday-*` file
 - chooses the newest matching `quietwrt-after-work-*` file
 - chooses the newest matching `quietwrt-password-vault-*` file
+- chooses the newest matching `quietwrt-schedules-*` file
 - shows the selected filenames before restoring
 - works with any subset of the files
-- leaves the other router-side list untouched if only one backup file exists
-- runs one sync after the restore completes
+- leaves unselected router-side lists and timings untouched
+- preserves every current blocklist and lockout enable/disable choice
+- validates all selected files before making changes, then restores them and reconciles policy as one operation
+
+The ZIP downloaded from the LAN blocklists page also contains `quietwrt-schedules.txt`. Importing an older ZIP without this file still works and leaves current timings unchanged.
 
 ## 6. Schedule And Reconciliation
 
@@ -302,10 +309,12 @@ Useful direct commands:
 /usr/bin/quietwrtctl schedule after_work 1630 1900
 /usr/bin/quietwrtctl schedule password_vault 0945 0930
 /usr/bin/quietwrtctl schedule overnight 1900 0400
+/usr/bin/quietwrtctl export-schedules
 /usr/bin/quietwrtctl restore --always /path/to/quietwrt-always-YYYY-MM-DD-HHMMSS.txt
 /usr/bin/quietwrtctl restore --workday /path/to/quietwrt-workday-YYYY-MM-DD-HHMMSS.txt
 /usr/bin/quietwrtctl restore --after-work /path/to/quietwrt-after-work-YYYY-MM-DD-HHMMSS.txt
 /usr/bin/quietwrtctl restore --password-vault /path/to/quietwrt-password-vault-YYYY-MM-DD-HHMMSS.txt
+/usr/bin/quietwrtctl restore --schedules /path/to/quietwrt-schedules-YYYY-MM-DD-HHMMSS.txt
 cat /tmp/quietwrt-adguard-restart.log
 cat /tmp/quietwrt-boot-reconcile.log
 ```

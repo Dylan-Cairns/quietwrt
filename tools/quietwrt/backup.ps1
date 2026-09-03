@@ -11,6 +11,7 @@ function Get-QuietWrtBackupFileNames {
         Workday = Join-Path $OutputDirectory "quietwrt-workday-$suffix.txt"
         AfterWork = Join-Path $OutputDirectory "quietwrt-after-work-$suffix.txt"
         PasswordVault = Join-Path $OutputDirectory "quietwrt-password-vault-$suffix.txt"
+        Schedules = Join-Path $OutputDirectory "quietwrt-schedules-$suffix.txt"
     }
 }
 
@@ -23,12 +24,14 @@ function Get-QuietWrtLatestBackupSelection {
     $workday = @()
     $afterWork = @()
     $passwordVault = @()
+    $schedules = @()
 
     if (Test-Path -LiteralPath $BackupDirectory) {
         $always = @(Get-ChildItem -LiteralPath $BackupDirectory -File -Filter 'quietwrt-always-*.txt' | Sort-Object Name -Descending)
         $workday = @(Get-ChildItem -LiteralPath $BackupDirectory -File -Filter 'quietwrt-workday-*.txt' | Sort-Object Name -Descending)
         $afterWork = @(Get-ChildItem -LiteralPath $BackupDirectory -File -Filter 'quietwrt-after-work-*.txt' | Sort-Object Name -Descending)
         $passwordVault = @(Get-ChildItem -LiteralPath $BackupDirectory -File -Filter 'quietwrt-password-vault-*.txt' | Sort-Object Name -Descending)
+        $schedules = @(Get-ChildItem -LiteralPath $BackupDirectory -File -Filter 'quietwrt-schedules-*.txt' | Sort-Object Name -Descending)
     }
 
     return [pscustomobject]@{
@@ -37,6 +40,7 @@ function Get-QuietWrtLatestBackupSelection {
         Workday = if ($workday.Count -gt 0) { $workday[0] } else { $null }
         AfterWork = if ($afterWork.Count -gt 0) { $afterWork[0] } else { $null }
         PasswordVault = if ($passwordVault.Count -gt 0) { $passwordVault[0] } else { $null }
+        Schedules = if ($schedules.Count -gt 0) { $schedules[0] } else { $null }
     }
 }
 
@@ -67,6 +71,11 @@ exit $missing
         throw "QuietWrt backup source file is missing: $($check.Output)"
     }
 
+    $scheduleBackup = Invoke-QuietWrtRemote -Connection $Connection -Command '/usr/bin/quietwrtctl export-schedules'
+    if ([string]::IsNullOrWhiteSpace([string]$scheduleBackup.Output)) {
+        throw 'QuietWrt schedule backup output was empty.'
+    }
+
     $destination = Get-QuietWrtBackupFileNames -OutputDirectory $OutputDirectory
     $tempDir = Join-Path ([System.IO.Path]::GetTempPath()) ("quietwrt-backup-" + [guid]::NewGuid().ToString('N'))
     $null = New-Item -ItemType Directory -Path $tempDir -Force
@@ -76,11 +85,17 @@ exit $missing
         Receive-QuietWrtSftpItem -Session $Connection.SftpSession -Path $script:QuietWrtRemotePaths.WorkdayListPath -Destination $tempDir | Out-Null
         Receive-QuietWrtSftpItem -Session $Connection.SftpSession -Path $script:QuietWrtRemotePaths.AfterWorkListPath -Destination $tempDir | Out-Null
         Receive-QuietWrtSftpItem -Session $Connection.SftpSession -Path $script:QuietWrtRemotePaths.PasswordVaultListPath -Destination $tempDir | Out-Null
+        [System.IO.File]::WriteAllText(
+            (Join-Path $tempDir 'quietwrt-schedules.txt'),
+            ([string]$scheduleBackup.Output + "`n"),
+            [System.Text.UTF8Encoding]::new($false)
+        )
 
         Move-Item -LiteralPath (Join-Path $tempDir 'always-blocked.txt') -Destination $destination.Always -Force
         Move-Item -LiteralPath (Join-Path $tempDir 'workday-blocked.txt') -Destination $destination.Workday -Force
         Move-Item -LiteralPath (Join-Path $tempDir 'after-work-blocked.txt') -Destination $destination.AfterWork -Force
         Move-Item -LiteralPath (Join-Path $tempDir 'password-vault-blocked.txt') -Destination $destination.PasswordVault -Force
+        Move-Item -LiteralPath (Join-Path $tempDir 'quietwrt-schedules.txt') -Destination $destination.Schedules -Force
     } finally {
         Remove-Item -LiteralPath $tempDir -Recurse -Force -ErrorAction SilentlyContinue
     }
@@ -99,7 +114,7 @@ function Restore-QuietWrtBlocklists {
     }
 
     $selection = Get-QuietWrtLatestBackupSelection -BackupDirectory $BackupDirectory
-    if ($null -eq $selection.Always -and $null -eq $selection.Workday -and $null -eq $selection.AfterWork -and $null -eq $selection.PasswordVault) {
+    if ($null -eq $selection.Always -and $null -eq $selection.Workday -and $null -eq $selection.AfterWork -and $null -eq $selection.PasswordVault -and $null -eq $selection.Schedules) {
         throw "No backup files were found in $BackupDirectory."
     }
 
@@ -116,6 +131,9 @@ function Restore-QuietWrtBlocklists {
     }
     if ($selection.PasswordVault) {
         Write-Host "  Password vault: $($selection.PasswordVault.Name)"
+    }
+    if ($selection.Schedules) {
+        Write-Host "  Schedule timings: $($selection.Schedules.Name)"
     }
 
     $confirmation = Read-Host -Prompt 'Restore these backup files to the router? [y/N]'
@@ -151,6 +169,12 @@ function Restore-QuietWrtBlocklists {
             $remotePasswordVault = "$remoteRoot/$($selection.PasswordVault.Name)"
             Send-QuietWrtSftpItem -Session $Connection.SftpSession -Path $selection.PasswordVault.FullName -Destination $remoteRoot | Out-Null
             $restoreArgs += @('--password-vault', $remotePasswordVault)
+        }
+
+        if ($selection.Schedules) {
+            $remoteSchedules = "$remoteRoot/$($selection.Schedules.Name)"
+            Send-QuietWrtSftpItem -Session $Connection.SftpSession -Path $selection.Schedules.FullName -Destination $remoteRoot | Out-Null
+            $restoreArgs += @('--schedules', $remoteSchedules)
         }
 
         $command = '/usr/bin/quietwrtctl restore ' + ($restoreArgs -join ' ')

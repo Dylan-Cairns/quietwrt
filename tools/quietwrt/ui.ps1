@@ -89,7 +89,7 @@ function Get-QuietWrtMenuLines {
         '9. Set after-work window'
         '10. Set password vault window'
         '11. Set overnight window'
-        '12. Backup all blocklists to this PC'
+        '12. Backup all blocklists and schedule timings to this PC'
         '13. Restore latest backup'
         '0. Exit'
     )
@@ -223,6 +223,7 @@ function Invoke-QuietWrtMenuSelection {
             Write-Host "  $($backupPaths.Workday)"
             Write-Host "  $($backupPaths.AfterWork)"
             Write-Host "  $($backupPaths.PasswordVault)"
+            Write-Host "  $($backupPaths.Schedules)"
             return [pscustomobject]@{
                 Continue = $true
                 Status = $Status

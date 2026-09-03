@@ -21,7 +21,7 @@ Describe 'QuietWrt PowerShell CLI' {
         $lines[4] | Should Be '5. Enable password vault blocklist'
         $lines[5] | Should Be '6. Disable overnight blocking'
         $lines[6] | Should Be '7. Enable Saturday blockout'
-        $lines[11] | Should Be '12. Backup all blocklists to this PC'
+        $lines[11] | Should Be '12. Backup all blocklists and schedule timings to this PC'
         $lines[12] | Should Be '13. Restore latest backup'
     }
 
@@ -296,6 +296,7 @@ Describe 'QuietWrt PowerShell CLI' {
         $names.Workday | Should Be 'C:\temp\quietwrt-workday-2026-04-10-080910.txt'
         $names.AfterWork | Should Be 'C:\temp\quietwrt-after-work-2026-04-10-080910.txt'
         $names.PasswordVault | Should Be 'C:\temp\quietwrt-password-vault-2026-04-10-080910.txt'
+        $names.Schedules | Should Be 'C:\temp\quietwrt-schedules-2026-04-10-080910.txt'
     }
 
     It 'selects the newest backup file for each list type' {
@@ -308,6 +309,8 @@ Describe 'QuietWrt PowerShell CLI' {
         Set-Content -LiteralPath (Join-Path $TestDrive 'quietwrt-after-work-2026-04-12-080910.txt') -Value 'f'
         Set-Content -LiteralPath (Join-Path $TestDrive 'quietwrt-password-vault-2026-04-06-080910.txt') -Value 'g'
         Set-Content -LiteralPath (Join-Path $TestDrive 'quietwrt-password-vault-2026-04-13-080910.txt') -Value 'h'
+        Set-Content -LiteralPath (Join-Path $TestDrive 'quietwrt-schedules-2026-04-05-080910.txt') -Value 'i'
+        Set-Content -LiteralPath (Join-Path $TestDrive 'quietwrt-schedules-2026-04-14-080910.txt') -Value 'j'
 
         $selection = Get-QuietWrtLatestBackupSelection -BackupDirectory $TestDrive
 
@@ -315,6 +318,7 @@ Describe 'QuietWrt PowerShell CLI' {
         $selection.Workday.Name | Should Be 'quietwrt-workday-2026-04-11-080910.txt'
         $selection.AfterWork.Name | Should Be 'quietwrt-after-work-2026-04-12-080910.txt'
         $selection.PasswordVault.Name | Should Be 'quietwrt-password-vault-2026-04-13-080910.txt'
+        $selection.Schedules.Name | Should Be 'quietwrt-schedules-2026-04-14-080910.txt'
     }
 
     It 'throws if a backup source file is missing on the router' {
@@ -329,7 +333,16 @@ Describe 'QuietWrt PowerShell CLI' {
         $expected = Get-QuietWrtBackupFileNames -OutputDirectory $TestDrive -Timestamp $now
 
         Mock Test-QuietWrtInstalled { $true }
-        Mock Invoke-QuietWrtRemote { [pscustomobject]@{ ExitStatus = 0; Output = ''; Raw = $null } }
+        Mock Invoke-QuietWrtRemote {
+            if ($Command -eq '/usr/bin/quietwrtctl export-schedules') {
+                return [pscustomobject]@{
+                    ExitStatus = 0
+                    Output = "format=quietwrt-schedules`nversion=1`nworkday_start=0400`nworkday_end=1630`nafter_work_start=1630`nafter_work_end=1900`npassword_vault_start=0945`npassword_vault_end=0930`novernight_start=1900`novernight_end=0400"
+                    Raw = $null
+                }
+            }
+            return [pscustomobject]@{ ExitStatus = 0; Output = ''; Raw = $null }
+        }
         Mock Get-QuietWrtBackupFileNames { $expected }
         Mock Receive-QuietWrtSftpItem {
             param($Session, $Path, $Destination)
@@ -355,6 +368,9 @@ Describe 'QuietWrt PowerShell CLI' {
         (Get-Content -LiteralPath $paths.Workday -Raw) | Should Be 'workday.example'
         (Get-Content -LiteralPath $paths.AfterWork -Raw) | Should Be 'after.example'
         (Get-Content -LiteralPath $paths.PasswordVault -Raw) | Should Be 'vault.example'
+        (Get-Content -LiteralPath $paths.Schedules -Raw) | Should Match 'format=quietwrt-schedules'
+        (Get-Content -LiteralPath $paths.Schedules -Raw) | Should Not Match 'enabled'
+        Assert-MockCalled Invoke-QuietWrtRemote -Times 1 -Exactly -ParameterFilter { $Command -eq '/usr/bin/quietwrtctl export-schedules' }
     }
 
     It 'restores the newest available backups to the router after confirmation' {
@@ -362,10 +378,12 @@ Describe 'QuietWrt PowerShell CLI' {
         $workdayPath = Join-Path $TestDrive 'quietwrt-workday-2026-04-11-080910.txt'
         $afterWorkPath = Join-Path $TestDrive 'quietwrt-after-work-2026-04-12-080910.txt'
         $passwordVaultPath = Join-Path $TestDrive 'quietwrt-password-vault-2026-04-13-080910.txt'
+        $schedulesPath = Join-Path $TestDrive 'quietwrt-schedules-2026-04-14-080910.txt'
         Set-Content -LiteralPath $alwaysPath -Value 'always.example' -NoNewline
         Set-Content -LiteralPath $workdayPath -Value 'workday.example' -NoNewline
         Set-Content -LiteralPath $afterWorkPath -Value 'after.example' -NoNewline
         Set-Content -LiteralPath $passwordVaultPath -Value 'vault.example' -NoNewline
+        Set-Content -LiteralPath $schedulesPath -Value 'format=quietwrt-schedules' -NoNewline
 
         $updatedStatus = [pscustomobject]@{
             installed = $true
@@ -401,6 +419,7 @@ Describe 'QuietWrt PowerShell CLI' {
                 Workday = Get-Item -LiteralPath $workdayPath
                 AfterWork = Get-Item -LiteralPath $afterWorkPath
                 PasswordVault = Get-Item -LiteralPath $passwordVaultPath
+                Schedules = Get-Item -LiteralPath $schedulesPath
             }
         }
         Mock Read-Host { 'y' }
@@ -411,9 +430,9 @@ Describe 'QuietWrt PowerShell CLI' {
         $status = Restore-QuietWrtBlocklists -Connection ([pscustomobject]@{ SftpSession = [pscustomobject]@{} }) -BackupDirectory $TestDrive
 
         $status.installed | Should Be $true
-        Assert-MockCalled Send-QuietWrtSftpItem -Times 4 -Exactly
+        Assert-MockCalled Send-QuietWrtSftpItem -Times 5 -Exactly
         Assert-MockCalled Invoke-QuietWrtRemote -Times 1 -ParameterFilter { $Command -match '^mkdir -p /tmp/quietwrt-restore-' }
-        Assert-MockCalled Invoke-QuietWrtRemote -Times 1 -ParameterFilter { $Command -match 'quietwrtctl restore --always ' -and $Command -match '--workday ' -and $Command -match '--after-work ' -and $Command -match '--password-vault ' }
+        Assert-MockCalled Invoke-QuietWrtRemote -Times 1 -ParameterFilter { $Command -match 'quietwrtctl restore --always ' -and $Command -match '--workday ' -and $Command -match '--after-work ' -and $Command -match '--password-vault ' -and $Command -match '--schedules ' }
     }
 
     It 'uploads the router payload over sftp and stages it into the final paths' {

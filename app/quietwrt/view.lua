@@ -323,7 +323,7 @@ local function render_import_form(script_name)
     parts,
     [[<section class="panel form-panel field-stack">
 <div class="section-title"><h2>Import a QuietWrt ZIP</h2></div>
-<p class="field-help">Adds domains from a previously downloaded ZIP to the matching blocklists. Current entries are kept.</p>
+<p class="field-help">Adds domains from a previously downloaded ZIP while keeping current entries. If schedule timings are included, they are restored without changing which blocklists or lockouts are enabled.</p>
 <form method="post" action="]],
     util.html_escape(script_name),
     [[" enctype="multipart/form-data">

@@ -59,8 +59,8 @@ The local CLI can:
 - install or update QuietWrt
 - enable or disable the `always`, `workday`, `after work`, `password vault`, `overnight`, and `Saturday blockout` toggles
 - change the `workday`, `after work`, `password vault`, and `overnight` schedule windows
-- save router blocklist backups into `backups/`
-- restore the newest matching `quietwrt-always-*`, `quietwrt-workday-*`, `quietwrt-after-work-*`, and `quietwrt-password-vault-*` backups
+- save router blocklist and schedule-timing backups into `backups/`
+- restore the newest matching blocklist and `quietwrt-schedules-*` backups without changing enable/disable choices
 
 To clean up old local backups, run:
 

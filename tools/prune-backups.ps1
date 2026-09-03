@@ -13,7 +13,8 @@ $patterns = @(
     'quietwrt-always-*.txt',
     'quietwrt-workday-*.txt',
     'quietwrt-after-work-*.txt',
-    'quietwrt-password-vault-*.txt'
+    'quietwrt-password-vault-*.txt',
+    'quietwrt-schedules-*.txt'
 )
 
 $filesToKeep = @()

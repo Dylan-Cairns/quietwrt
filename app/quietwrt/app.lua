@@ -13,11 +13,17 @@ local function read_stdin(length)
 end
 
 local function import_message(result)
-  return "Imported "
+  local message = "Imported "
     .. tostring(result.added_count or 0)
     .. " new domains from ZIP. Active rules: "
     .. tostring(result.active_rule_count or 0)
     .. "."
+
+  if result.schedules_restored then
+    message = message .. " Schedule timings restored; enable states preserved."
+  end
+
+  return message
 end
 
 local function toggle_label(toggle_name)
@@ -183,10 +189,15 @@ Commands:
   apply     Alias for sync.
   recover   Authenticated same-boot attempt to leave failsafe-open mode.
   status    Show current list counts and schedule state. Use --json for machine-readable output.
+  export-schedules Write a versioned timing-only schedule backup to stdout.
   set       Toggle always, workday, after_work, password_vault, overnight, or saturday_blockout on or off.
   schedule  Set workday, after_work, password_vault, or overnight start/end times.
-  restore   Restore always/workday/after-work/password-vault list files from uploaded backup files and apply them.
+  restore   Restore list files and/or schedule timings from uploaded backup files and apply them.
 ]])
+end
+
+local function restore_usage()
+  return "Usage: quietwrtctl restore [--always <path>] [--workday <path>] [--after-work <path>] [--password-vault <path>] [--schedules <path>]"
 end
 
 local function parse_restore_args(argv)
@@ -197,8 +208,8 @@ local function parse_restore_args(argv)
     local flag = argv[index]
     local value = argv[index + 1]
 
-    if (flag ~= "--always" and flag ~= "--workday" and flag ~= "--after-work" and flag ~= "--password-vault") or value == nil or value == "" then
-      return nil, "Usage: quietwrtctl restore [--always <path>] [--workday <path>] [--after-work <path>] [--password-vault <path>]"
+    if (flag ~= "--always" and flag ~= "--workday" and flag ~= "--after-work" and flag ~= "--password-vault" and flag ~= "--schedules") or value == nil or value == "" then
+      return nil, restore_usage()
     end
 
     if flag == "--always" then
@@ -207,15 +218,17 @@ local function parse_restore_args(argv)
       parsed.workday_path = value
     elseif flag == "--after-work" then
       parsed.after_work_path = value
-    else
+    elseif flag == "--password-vault" then
       parsed.password_vault_path = value
+    else
+      parsed.schedules_path = value
     end
 
     index = index + 2
   end
 
-  if not parsed.always_path and not parsed.workday_path and not parsed.after_work_path and not parsed.password_vault_path then
-    return nil, "Usage: quietwrtctl restore [--always <path>] [--workday <path>] [--after-work <path>] [--password-vault <path>]"
+  if not parsed.always_path and not parsed.workday_path and not parsed.after_work_path and not parsed.password_vault_path and not parsed.schedules_path then
+    return nil, restore_usage()
   end
 
   return parsed, nil
@@ -311,6 +324,16 @@ function M.run_cli(argv, options)
     return 0
   end
 
+  if command == "export-schedules" then
+    local ok, output = service.export_schedules(context)
+    if not ok then
+      io.stderr:write(output, "\n")
+      return 1
+    end
+    io.write(output)
+    return 0
+  end
+
   if command == "set" then
     local toggle_name = argv[2]
     local raw_state = argv[3]
@@ -390,7 +413,15 @@ function M.run_cli(argv, options)
       return 1
     end
 
-    io.write("Restored backup lists. Active rules: ", tostring(result.active_rule_count), ".\n")
+    io.write(
+      "Restored ",
+      tostring(result.restored_list_count or 0),
+      " backup list files",
+      result.schedules_restored and " and schedule timings; enable states preserved" or "",
+      ". Active rules: ",
+      tostring(result.active_rule_count),
+      ".\n"
+    )
     return 0
   end
 

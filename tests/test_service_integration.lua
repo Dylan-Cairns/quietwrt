@@ -2,6 +2,7 @@ local helper = require("test_helper")
 local lu = require("luaunit")
 local archive = require("quietwrt.archive")
 local firewall = require("quietwrt.firewall")
+local schedule_backup = require("quietwrt.schedule_backup")
 local service = require("quietwrt.service")
 
 TestServiceIntegration = {}
@@ -1335,6 +1336,114 @@ function TestServiceIntegration:test_restore_lists_updates_only_the_provided_bac
   fixture.cleanup()
 end
 
+function TestServiceIntegration:test_restore_schedule_file_preserves_all_enable_states()
+  local fixture = installed_fixture({
+    capture_map = {
+      ["uci -q get quietwrt.settings.workday_enabled"] = "0",
+      ["uci -q get quietwrt.settings.after_work_enabled"] = "1",
+      ["uci -q get quietwrt.settings.password_vault_enabled"] = "0",
+      ["uci -q get quietwrt.settings.overnight_enabled"] = "0",
+      ["uci -q get quietwrt.settings.saturday_blockout_enabled"] = "1",
+    },
+    now = function()
+      return { hour = 12, min = 0, wday = 2 }
+    end,
+  })
+
+  helper.write_config(fixture.paths.config_path, {})
+  helper.write_file(fixture.paths.always_list_path, "always.example\n")
+  helper.write_file(fixture.paths.workday_list_path, "work.example\n")
+  helper.write_file(fixture.paths.after_work_list_path, "after.example\n")
+  helper.write_file(fixture.paths.password_vault_list_path, "vault.example\n")
+  helper.write_file(fixture.paths.passthrough_rules_path, "")
+
+  local schedule_path = helper.join_path(fixture.root, "quietwrt-schedules-restore.txt")
+  helper.write_file(schedule_path, table.concat({
+    "format=quietwrt-schedules",
+    "version=1",
+    "workday_start=0500",
+    "workday_end=1500",
+    "after_work_start=1500",
+    "after_work_end=1800",
+    "password_vault_start=1000",
+    "password_vault_end=0900",
+    "overnight_start=1800",
+    "overnight_end=0500",
+    "",
+  }, "\n"))
+
+  local context = service.new_context({
+    env = fixture.env,
+    paths = fixture.paths,
+  })
+  local ok, result = service.restore_lists(context, {
+    schedules_path = schedule_path,
+  })
+
+  lu.assertTrue(ok)
+  lu.assertTrue(result.schedules_restored)
+  lu.assertEquals(result.restored_list_count, 0)
+  lu.assertEquals(fixture.capture_state["uci -q get quietwrt.settings.workday_enabled"], "0")
+  lu.assertEquals(fixture.capture_state["uci -q get quietwrt.settings.after_work_enabled"], "1")
+  lu.assertEquals(fixture.capture_state["uci -q get quietwrt.settings.password_vault_enabled"], "0")
+  lu.assertEquals(fixture.capture_state["uci -q get quietwrt.settings.overnight_enabled"], "0")
+  lu.assertEquals(fixture.capture_state["uci -q get quietwrt.settings.saturday_blockout_enabled"], "1")
+  lu.assertEquals(fixture.capture_state["uci -q get quietwrt.settings.workday_start"], "0500")
+  lu.assertEquals(fixture.capture_state["uci -q get quietwrt.settings.overnight_end"], "0500")
+  lu.assertEquals(helper.read_file(fixture.paths.always_list_path), "always.example\n")
+  lu.assertStrContains(helper.read_file(fixture.paths.crontab_path), "0 5 * * * /usr/bin/quietwrtctl sync")
+  fixture.cleanup()
+end
+
+function TestServiceIntegration:test_combined_restore_rolls_back_lists_and_cron_when_policy_apply_fails()
+  local fixture = installed_fixture({
+    execute = function(log, command)
+      table.insert(log, command)
+      if command == "restart-firewall" then
+        return 1
+      end
+      return 0
+    end,
+  })
+
+  helper.write_config(fixture.paths.config_path, {})
+  helper.write_file(fixture.paths.always_list_path, "old.example\n")
+  helper.write_file(fixture.paths.workday_list_path, "")
+  helper.write_file(fixture.paths.after_work_list_path, "")
+  helper.write_file(fixture.paths.password_vault_list_path, "")
+  helper.write_file(fixture.paths.passthrough_rules_path, "")
+  helper.write_file(fixture.paths.crontab_path, "# original cron\n")
+
+  local list_path = helper.join_path(fixture.root, "quietwrt-always-restore.txt")
+  helper.write_file(list_path, "new.example\n")
+  local schedule_path = helper.join_path(fixture.root, "quietwrt-schedules-restore.txt")
+  helper.write_file(schedule_path, assert(schedule_backup.serialize({
+    workday_start = "0500",
+    workday_end = "1500",
+    after_work_start = "1500",
+    after_work_end = "1800",
+    password_vault_start = "1000",
+    password_vault_end = "0900",
+    overnight_start = "1800",
+    overnight_end = "0500",
+  })))
+
+  local context = service.new_context({
+    env = fixture.env,
+    paths = fixture.paths,
+  })
+  local ok, err = service.restore_lists(context, {
+    always_path = list_path,
+    schedules_path = schedule_path,
+  })
+
+  lu.assertFalse(ok)
+  lu.assertStrContains(err, "Firewall update failed")
+  lu.assertEquals(helper.read_file(fixture.paths.always_list_path), "old.example\n")
+  lu.assertEquals(helper.read_file(fixture.paths.crontab_path), "# original cron\n")
+  fixture.cleanup()
+end
+
 function TestServiceIntegration:test_import_blocklists_archive_merges_without_removing_current_entries()
   local fixture = installed_fixture({
     now = function()
@@ -1376,6 +1485,7 @@ function TestServiceIntegration:test_import_blocklists_archive_merges_without_re
   local ok, result = service.import_blocklists_archive(context, zip)
 
   lu.assertTrue(ok)
+  lu.assertFalse(result.schedules_restored)
   lu.assertEquals(result.added_count, 3)
   lu.assertEquals(result.duplicate_count, 2)
   lu.assertEquals(helper.read_file(fixture.paths.always_list_path), "current.example\nnew-always.example\n")
@@ -1387,6 +1497,85 @@ function TestServiceIntegration:test_import_blocklists_archive_merges_without_re
   lu.assertStrContains(config, "||current.example^")
   lu.assertStrContains(config, "||new-always.example^")
   lu.assertStrContains(config, "||keep-work.example^")
+  lu.assertEquals(fixture.capture_state["uci -q get quietwrt.settings.workday_start"], "0400")
+  fixture.cleanup()
+end
+
+function TestServiceIntegration:test_import_schedule_only_archive_preserves_enable_states()
+  local fixture = installed_fixture({
+    capture_map = {
+      ["uci -q get quietwrt.settings.workday_enabled"] = "0",
+      ["uci -q get quietwrt.settings.overnight_enabled"] = "0",
+      ["uci -q get quietwrt.settings.saturday_blockout_enabled"] = "1",
+    },
+  })
+
+  helper.write_config(fixture.paths.config_path, {})
+  helper.write_file(fixture.paths.always_list_path, "always.example\n")
+  helper.write_file(fixture.paths.workday_list_path, "")
+  helper.write_file(fixture.paths.after_work_list_path, "")
+  helper.write_file(fixture.paths.password_vault_list_path, "")
+  helper.write_file(fixture.paths.passthrough_rules_path, "")
+
+  local schedules = assert(schedule_backup.serialize({
+    workday_start = "0600",
+    workday_end = "1400",
+    after_work_start = "1400",
+    after_work_end = "1800",
+    password_vault_start = "1000",
+    password_vault_end = "0900",
+    overnight_start = "1800",
+    overnight_end = "0600",
+  }))
+  local zip = assert(archive.zip({
+    {
+      name = schedule_backup.FILE_NAME,
+      content = schedules,
+    },
+  }))
+
+  local context = service.new_context({
+    env = fixture.env,
+    paths = fixture.paths,
+  })
+  local ok, result = service.import_blocklists_archive(context, zip)
+
+  lu.assertTrue(ok)
+  lu.assertTrue(result.schedules_restored)
+  lu.assertEquals(result.added_count, 0)
+  lu.assertEquals(fixture.capture_state["uci -q get quietwrt.settings.workday_enabled"], "0")
+  lu.assertEquals(fixture.capture_state["uci -q get quietwrt.settings.overnight_enabled"], "0")
+  lu.assertEquals(fixture.capture_state["uci -q get quietwrt.settings.saturday_blockout_enabled"], "1")
+  lu.assertEquals(fixture.capture_state["uci -q get quietwrt.settings.workday_start"], "0600")
+  fixture.cleanup()
+end
+
+function TestServiceIntegration:test_import_invalid_schedule_archive_changes_nothing()
+  local fixture = installed_fixture()
+  helper.write_config(fixture.paths.config_path, {})
+  helper.write_file(fixture.paths.always_list_path, "current.example\n")
+  helper.write_file(fixture.paths.workday_list_path, "")
+  helper.write_file(fixture.paths.after_work_list_path, "")
+  helper.write_file(fixture.paths.password_vault_list_path, "")
+  helper.write_file(fixture.paths.passthrough_rules_path, "")
+
+  local zip = assert(archive.zip({
+    {
+      name = schedule_backup.FILE_NAME,
+      content = "format=quietwrt-schedules\nversion=1\nworkday_start=2500\n",
+    },
+  }))
+  local context = service.new_context({
+    env = fixture.env,
+    paths = fixture.paths,
+  })
+  local ok, err = service.import_blocklists_archive(context, zip)
+
+  lu.assertFalse(ok)
+  lu.assertStrContains(err, "missing workday_end")
+  lu.assertEquals(helper.read_file(fixture.paths.always_list_path), "current.example\n")
+  lu.assertEquals(fixture.capture_state["uci -q get quietwrt.settings.workday_start"], "0400")
+  lu.assertEquals(#fixture.commands, 0)
   fixture.cleanup()
 end
 
@@ -1558,6 +1747,27 @@ function TestServiceIntegration:test_download_blocklists_archive_exports_current
   lu.assertStrContains(result.content, "workday-blocked.txtwork.example\n")
   lu.assertStrContains(result.content, "after-work-blocked.txtafter.example\n")
   lu.assertStrContains(result.content, "password-vault-blocked.txtvault.example\n")
+  local entries = assert(archive.unzip_stored(result.content))
+  lu.assertStrContains(entries[schedule_backup.FILE_NAME], "format=quietwrt-schedules\n")
+  lu.assertStrContains(entries[schedule_backup.FILE_NAME], "overnight_end=0400\n")
+  lu.assertNil(entries[schedule_backup.FILE_NAME]:find("enabled", 1, true))
+  fixture.cleanup()
+end
+
+function TestServiceIntegration:test_export_schedules_returns_canonical_timing_only_file()
+  local fixture = installed_fixture()
+  local context = service.new_context({
+    env = fixture.env,
+    paths = fixture.paths,
+  })
+
+  local ok, content = service.export_schedules(context)
+
+  lu.assertTrue(ok)
+  lu.assertStrContains(content, "format=quietwrt-schedules\n")
+  lu.assertStrContains(content, "workday_start=0400\n")
+  lu.assertStrContains(content, "overnight_end=0400\n")
+  lu.assertNil(content:find("enabled", 1, true))
   fixture.cleanup()
 end
 

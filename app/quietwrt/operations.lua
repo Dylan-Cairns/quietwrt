@@ -4,6 +4,7 @@ local install_ops = require("quietwrt.install_ops")
 local list_ops = require("quietwrt.list_ops")
 local reconciler = require("quietwrt.reconciler")
 local recovery = require("quietwrt.recovery")
+local restore_ops = require("quietwrt.restore_ops")
 local settings_ops = require("quietwrt.settings_ops")
 local status_ops = require("quietwrt.status_ops")
 
@@ -63,6 +64,10 @@ end
 
 function M.download_blocklists_archive(context, format)
   return archive_ops.download_blocklists_archive(context, format)
+end
+
+function M.export_schedules(context)
+  return archive_ops.export_schedules(context)
 end
 
 function M.install(context)
@@ -141,7 +146,7 @@ function M.restore_lists(context, restore_paths)
       return false, marker_error
     end
 
-    return list_ops.restore_lists(context, restore_paths)
+    return restore_ops.restore_files(context, restore_paths)
   end)
 end
 
@@ -152,7 +157,7 @@ function M.import_blocklists_archive(context, content)
       return false, marker_error
     end
 
-    return list_ops.import_blocklists_archive(context, content)
+    return restore_ops.import_archive(context, content)
   end)
 end
 
