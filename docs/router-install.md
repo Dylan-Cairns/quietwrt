@@ -12,7 +12,7 @@ Before installing QuietWrt, confirm these in the GL.iNet admin UI:
 2. `SSH Local Access` is enabled
 3. `WAN Remote Access` stays off
 4. `IPv6` is disabled
-5. `Override DNS Settings for All Clients` is enabled
+5. note that QuietWrt manages wired DNS redirection itself; the GL.iNet `Override DNS Settings for All Clients` setting is not required
 6. the router timezone is correct
 7. `AdGuard Home` is enabled and protection is on
 
@@ -65,6 +65,8 @@ It then:
 
 - installs the official `kmod-ipt-physdev` and `iptables-mod-physdev` packages if needed
 - enables bridge IPv4 firewall visibility at runtime and persists it in `/etc/sysctl.d/99-quietwrt-bridge-netfilter.conf`
+- configures dnsmasq on port `53` for direct, unfiltered WAN resolution
+- configures AdGuard Home on port `3053` to resolve allowed wired requests through dnsmasq
 - creates or validates the canonical QuietWrt files in `/etc/quietwrt/`
 - writes persistent toggle state in UCI under `quietwrt.settings.*`
 - installs the managed cron block
@@ -72,7 +74,7 @@ It then:
 - installs or refreshes the managed firewall sections
 - applies the current schedule state immediately
 
-The overnight and Saturday lockouts match routed traffic that entered through wired LAN device `eth1`. Wi-Fi clients on the shared `br-lan` remain online. QuietWrt does not create a second network, subnet, DHCP service, or firewall zone.
+All QuietWrt restrictions apply only to traffic entering through wired LAN device `eth1`. Wired DNS on port `53` is redirected to AdGuard Home on port `3053`, wired DNS-over-TLS on port `853` is rejected, and the overnight and Saturday lockouts reject wired internet traffic. Wi-Fi clients on the shared `br-lan` use unfiltered dnsmasq directly and remain unrestricted. QuietWrt does not create a second network, subnet, DHCP service, or firewall zone.
 
 Fresh installs currently default to:
 
@@ -214,6 +216,14 @@ QuietWrt-managed firewall sections are:
 - `firewall.quietwrt_dot_fwd`
 - `firewall.quietwrt_curfew`
 
+The DNS redirect uses this wired-ingress match and sends port `53` to AdGuard Home port `3053`:
+
+```text
+-m physdev --physdev-in eth1
+```
+
+The DoT and curfew rules use the wired routed-traffic match below. Dnsmasq port `53` remains unfiltered for Wi-Fi, while AdGuard Home forwards allowed wired queries to `127.0.0.1:53`.
+
 The curfew section remains a normal `lan -> wan` fw3 rule, with this wired-ingress match:
 
 ```text
@@ -271,16 +281,16 @@ The local web page is append-only by design:
 
 After install, confirm:
 
-1. a site added to `Always blocked` is blocked during daytime hours
-2. a site added to `Workday blocked` is blocked before `16:30`
-3. a site added to `After work blocked` is blocked between `16:30` and `19:00`
-4. a site added to `Password vault blocked` is blocked except during the daily `09:30` to `09:45` opening
+1. on a wired client, a site added to `Always blocked` is blocked during daytime hours
+2. on a wired client, a site added to `Workday blocked` is blocked before `16:30`
+3. on a wired client, a site added to `After work blocked` is blocked between `16:30` and `19:00`
+4. on a wired client, a site added to `Password vault blocked` is blocked except during the daily `09:30` to `09:45` opening
 5. wired internet access is unavailable between `19:00` and `04:00` when overnight blocking is enabled
 6. wired internet access is unavailable on Saturday when Saturday blockout is enabled
-7. a Wi-Fi phone remains online during both wired lockouts
+7. the same blocked domains resolve normally on a Wi-Fi client, and a Wi-Fi phone remains online during both wired lockouts
 8. router-local access to `https://<router-ip>:8443/cgi-bin/quietwrt` still works during lockout windows
-9. direct client DNS on `53` is intercepted
-10. direct `DoT` on `853` is blocked
+9. direct wired-client DNS on `53` is intercepted and redirected to port `3053`
+10. direct wired-client `DoT` on `853` is blocked, while Wi-Fi DNS and DoT remain unrestricted
 
 ## 11. Direct Router Commands
 

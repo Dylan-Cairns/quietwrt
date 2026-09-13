@@ -1,4 +1,5 @@
 local apply_engine = require("quietwrt.apply_engine")
+local dns = require("quietwrt.dns")
 local enforcement = require("quietwrt.enforcement")
 local lists_store = require("quietwrt.lists_store")
 local platform = require("quietwrt.platform")
@@ -135,6 +136,11 @@ function M.reconcile(context, options)
   local platform_ok, platform_error = prepare_platform(context, options)
   if not platform_ok then
     return enter_failsafe(context, platform_error)
+  end
+
+  local dns_ok, dns_error = dns.apply_unfiltered_dnsmasq(context)
+  if not dns_ok then
+    return enter_failsafe(context, dns_error)
   end
 
   local applied, apply_result = apply_engine.apply_mode(context, {

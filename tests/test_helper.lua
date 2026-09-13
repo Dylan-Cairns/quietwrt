@@ -24,6 +24,8 @@ M.PLATFORM_CAPTURE = {
   ['basename "$(readlink -f /sys/class/net/eth1/brport/bridge 2>/dev/null)"'] = "br-lan",
   ['command -v fw3 >/dev/null 2>&1 && iptables -V 2>/dev/null'] = "iptables v1.8.7 (legacy)",
   ['iptables -m physdev -h >/dev/null 2>&1 && echo ready'] = "ready",
+  ['uci -q get dhcp.@dnsmasq[0].server'] = "",
+  ['uci -q get dhcp.@dnsmasq[0].noresolv'] = "0",
 }
 
 local function shell_escape(path)
@@ -180,6 +182,7 @@ function M.make_context(overrides)
     password_vault_list_path = M.join_path(data_dir, "password-vault-blocked.txt"),
     passthrough_rules_path = M.join_path(data_dir, "passthrough-rules.txt"),
     restart_adguard_command = "restart-adguard",
+    restart_dnsmasq_command = "restart-dnsmasq",
     crontab_path = M.join_path(root, "root.crontab"),
     quietwrtctl_path = "/usr/bin/quietwrtctl",
     cgi_path = M.join_path(root, "www", "cgi-bin", "quietwrt"),
@@ -296,7 +299,7 @@ function M.make_context(overrides)
   }
 end
 
-function M.write_config(path, user_rules, protection_enabled)
+function M.write_config(path, user_rules, protection_enabled, upstream_dns)
   local rules_text = {}
   for _, rule in ipairs(user_rules or {}) do
     table.insert(rules_text, "  - '" .. rule:gsub("'", "''") .. "'")
@@ -304,6 +307,9 @@ function M.write_config(path, user_rules, protection_enabled)
 
   local content = {
     "protection_enabled: " .. ((protection_enabled == false) and "false" or "true"),
+    "dns:",
+    "  upstream_dns:",
+    "    - '" .. tostring(upstream_dns or "127.0.0.1:53") .. "'",
     "user_rules:",
   }
 
@@ -312,7 +318,7 @@ function M.write_config(path, user_rules, protection_enabled)
   end
 
   if #rules_text == 0 then
-    content[2] = "user_rules: []"
+    content[5] = "user_rules: []"
   end
 
   assert(M.write_file(path, table.concat(content, "\n") .. "\n"))

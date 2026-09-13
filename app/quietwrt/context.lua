@@ -76,6 +76,7 @@ function M.default_paths()
     password_vault_list_path = data_dir .. "/password-vault-blocked.txt",
     passthrough_rules_path = data_dir .. "/passthrough-rules.txt",
     restart_adguard_command = "/etc/init.d/adguardhome restart >/tmp/quietwrt-adguard-restart.log 2>&1",
+    restart_dnsmasq_command = "/etc/init.d/dnsmasq restart >/tmp/quietwrt-dnsmasq-restart.log 2>&1",
     crontab_path = "/etc/crontabs/root",
     quietwrtctl_path = "/usr/bin/quietwrtctl",
     cgi_path = "/www/cgi-bin/quietwrt",

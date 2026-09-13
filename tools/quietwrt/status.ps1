@@ -39,6 +39,7 @@ function New-QuietWrtStatusPlaceholder {
             dot_block = $false
             overnight_rule = $false
             wired_curfew = $false
+            unfiltered_wifi_dns = $false
             bridge_netfilter = $false
         }
         warnings = @()
@@ -151,6 +152,7 @@ function Complete-QuietWrtStatus {
         dot_block = $false
         overnight_rule = $false
         wired_curfew = $false
+        unfiltered_wifi_dns = $false
         bridge_netfilter = $false
     }
 

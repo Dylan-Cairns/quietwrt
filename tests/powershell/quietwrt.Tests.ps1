@@ -106,14 +106,14 @@ Describe 'QuietWrt PowerShell CLI' {
         Mock Invoke-QuietWrtRemote {
             [pscustomobject]@{
                 ExitStatus = 0
-                Output = '{"schema_version":"5","installed":true,"router_time":"21:05","protection_enabled":true,"enforcement_ready":true,"reconciliation_state":"failsafe_open","always_enabled":true,"workday_enabled":true,"after_work_enabled":true,"password_vault_enabled":true,"overnight_enabled":false,"saturday_blockout_enabled":true,"saturday_blockout_active":true,"always_count":1,"workday_count":2,"after_work_count":3,"password_vault_count":4,"active_rule_count":10,"desired_active_rule_count":10,"effective_active_rule_count":1,"schedule":{"after_work":{"start":"1630","end":"1900","display_start":"16:30","display_end":"19:00","overnight":false,"label":"After work","summary":"16:30 to 19:00"}},"hardening":{"dns_intercept":true,"dot_block":true,"overnight_rule":false,"wired_curfew":true,"bridge_netfilter":true},"warnings":[],"failsafe":{"active":true,"reason":"Could not read config."}}'
+                Output = '{"schema_version":"6","installed":true,"router_time":"21:05","protection_enabled":true,"enforcement_ready":true,"reconciliation_state":"failsafe_open","always_enabled":true,"workday_enabled":true,"after_work_enabled":true,"password_vault_enabled":true,"overnight_enabled":false,"saturday_blockout_enabled":true,"saturday_blockout_active":true,"always_count":1,"workday_count":2,"after_work_count":3,"password_vault_count":4,"active_rule_count":10,"desired_active_rule_count":10,"effective_active_rule_count":1,"schedule":{"after_work":{"start":"1630","end":"1900","display_start":"16:30","display_end":"19:00","overnight":false,"label":"After work","summary":"16:30 to 19:00"}},"hardening":{"dns_intercept":true,"dot_block":true,"overnight_rule":false,"wired_curfew":true,"unfiltered_wifi_dns":true,"bridge_netfilter":true},"warnings":[],"failsafe":{"active":true,"reason":"Could not read config."}}'
                 Raw = $null
             }
         }
 
         $status = Get-QuietWrtStatus -Connection ([pscustomobject]@{})
 
-        $status.schema_version | Should Be '5'
+        $status.schema_version | Should Be '6'
         $status.router_time | Should Be '21:05'
         $status.reconciliation_state | Should Be 'failsafe_open'
         $status.desired_active_rule_count | Should Be 10
@@ -125,6 +125,7 @@ Describe 'QuietWrt PowerShell CLI' {
         $status.schedule.workday | Should Be $null
         $status.schedule.password_vault | Should Be $null
         $status.hardening.wired_curfew | Should Be $true
+        $status.hardening.unfiltered_wifi_dns | Should Be $true
         $status.hardening.bridge_netfilter | Should Be $true
         $status.failsafe.active | Should Be $true
         $status.failsafe.reason | Should Be 'Could not read config.'

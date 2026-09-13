@@ -439,6 +439,9 @@ function M.render_page(script_name, state)
     .. tostring(state.effective_active_rule_count or 0)
     .. "."
   local status_items = {
+    render_status_item("Client scope", {
+      render_status_text("Wired filtering only"),
+    }, "Domain filtering, DNS interception, DoT blocking, and internet lockouts apply to eth1 clients. Wi-Fi clients are unrestricted."),
     render_status_item("Router time", {
       render_status_text(state.router_time or "Unknown"),
     }),
@@ -448,22 +451,22 @@ function M.render_page(script_name, state)
     render_status_item("Always blocklist", {
       render_enabled_chip(settings.always_enabled),
       render_enable_form(script_name, "always", settings.always_enabled),
-    }, "Active whenever internet is available."),
+    }, "Blocks matching domains for wired LAN clients whenever internet is available; Wi-Fi clients are unrestricted."),
     render_status_item("Workday blocklist", {
       render_enabled_chip(settings.workday_enabled),
       render_activity_chip(settings.workday_enabled, state.workday_active),
       render_enable_form(script_name, "workday", settings.workday_enabled),
-    }, render_window_detail(schedule_state.workday)),
+    }, "Wired LAN domain filtering: " .. render_window_detail(schedule_state.workday)),
     render_status_item("After work blocklist", {
       render_enabled_chip(settings.after_work_enabled),
       render_activity_chip(settings.after_work_enabled, state.after_work_active),
       render_enable_form(script_name, "after_work", settings.after_work_enabled),
-    }, render_window_detail(schedule_state.after_work)),
+    }, "Wired LAN domain filtering: " .. render_window_detail(schedule_state.after_work)),
     render_status_item("Password vault blocklist", {
       render_enabled_chip(settings.password_vault_enabled),
       render_activity_chip(settings.password_vault_enabled, state.password_vault_active),
       render_enable_form(script_name, "password_vault", settings.password_vault_enabled),
-    }, render_window_detail(schedule_state.password_vault)),
+    }, "Wired LAN domain filtering: " .. render_window_detail(schedule_state.password_vault)),
     render_status_item("Overnight lockout", {
       render_enabled_chip(settings.overnight_enabled),
       render_activity_chip(settings.overnight_enabled, state.overnight_active),

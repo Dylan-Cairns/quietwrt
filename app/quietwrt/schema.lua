@@ -1,8 +1,9 @@
 local M = {}
 
-M.SCHEMA_VERSION = "5"
+M.SCHEMA_VERSION = "6"
 M.UPGRADABLE_SCHEMA_VERSIONS = {
   ["4"] = true,
+  ["5"] = true,
 }
 
 M.MANAGED_FIREWALL_SECTIONS = {

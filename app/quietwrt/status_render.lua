@@ -53,9 +53,10 @@ function M.render_text(snapshot)
     "Active rules: " .. tostring(snapshot.active_rule_count),
     "Desired active rules: " .. tostring(snapshot.desired_active_rule_count or snapshot.active_rule_count),
     "Effective active rules: " .. tostring(snapshot.effective_active_rule_count or 0),
-    "DNS intercept hardening: " .. (snapshot.hardening.dns_intercept and "yes" or "no"),
-    "DoT block hardening: " .. (snapshot.hardening.dot_block and "yes" or "no"),
+    "Wired DNS intercept ready: " .. (snapshot.hardening.dns_intercept and "yes" or "no"),
+    "Wired DoT block ready: " .. (snapshot.hardening.dot_block and "yes" or "no"),
     "Wired curfew rule ready: " .. (snapshot.hardening.wired_curfew and "yes" or "no"),
+    "Unfiltered Wi-Fi DNS ready: " .. (snapshot.hardening.unfiltered_wifi_dns and "yes" or "no"),
     "Bridge netfilter ready: " .. (snapshot.hardening.bridge_netfilter and "yes" or "no"),
   }
 

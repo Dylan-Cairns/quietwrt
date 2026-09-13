@@ -1,4 +1,5 @@
 local context_helpers = require("quietwrt.context")
+local dns = require("quietwrt.dns")
 local enforcement = require("quietwrt.enforcement")
 local firewall = require("quietwrt.firewall")
 local lists_store = require("quietwrt.lists_store")
@@ -117,7 +118,9 @@ local function clear_adguard_rules_if_readable(context)
   end
 
   local compiled_rules = rules.compile_active_rules({}, {}, passthrough_rules)
-  local ok, err, changed = enforcement.apply_rules(context, parsed_config, compiled_rules)
+  local ok, err, changed = enforcement.apply_rules(context, parsed_config, compiled_rules, {
+    manage_upstream = false,
+  })
   if not ok then
     return false, err
   end
@@ -131,6 +134,11 @@ function M.enter_failsafe_open(context, reason)
   local firewall_ok, firewall_error, firewall_changed = firewall.clear_managed(context)
   if not firewall_ok then
     table.insert(warnings, firewall_error)
+  end
+
+  local dns_ok, dns_error, dns_changed = dns.apply_unfiltered_dnsmasq(context)
+  if not dns_ok then
+    table.insert(warnings, dns_error)
   end
 
   local adguard_ok, adguard_error, adguard_state = clear_adguard_rules_if_readable(context)
@@ -156,7 +164,7 @@ function M.enter_failsafe_open(context, reason)
     failsafe_open = true,
     reason = reason,
     warnings = warnings,
-    changed = firewall_changed == true or adguard_state == "cleared" or marker_changed == true,
+    changed = firewall_changed == true or adguard_state == "cleared" or dns_changed == true or marker_changed == true,
     boot_id = M.current_boot_id(context),
   }
 end

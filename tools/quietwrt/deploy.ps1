@@ -118,7 +118,7 @@ fi
 
     $checklist.Add('Confirm the router is in Router mode in the GL.iNet admin UI.')
     $checklist.Add('Confirm AdGuard Home is enabled in the GL.iNet admin UI.')
-    $checklist.Add('Confirm Override DNS Settings for All Clients is enabled.')
+    $checklist.Add('QuietWrt manages wired DNS redirection itself; the GL.iNet Override DNS setting is not required for filtering.')
     $checklist.Add('Confirm IPv6 is disabled.')
 
     return [pscustomobject]@{

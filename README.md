@@ -9,7 +9,7 @@ It keeps four canonical blocklists on the router:
 - `after work blocked`
 - `password vault blocked`
 
-It can also enforce wired-client internet lockouts during the nightly curfew, and optionally all day Saturday. Wi-Fi clients remain online during these lockouts.
+All filtering is wired-only: it applies domain blocklists and optional internet lockouts to clients on the `eth1` LAN port. Wi-Fi clients remain unrestricted.
 
 ## Schedule
 
@@ -23,10 +23,12 @@ You can change the `workday`, `after work`, `password vault`, and `overnight` wi
 
 ## How It Works
 
-- `AdGuard Home` handles domain blocking
+- wired DNS is redirected from port `53` to `AdGuard Home` on port `3053` for domain blocking
+- Wi-Fi uses dnsmasq on port `53` directly and remains unfiltered
+- AdGuard Home resolves allowed wired requests through dnsmasq at `127.0.0.1:53`
 - QuietWrt treats disabled `AdGuard Home` protection as unhealthy and will not report policy as applied
 - QuietWrt stores canonical list files in `/etc/quietwrt/`
-- firewall rules reduce DNS bypass and enforce the nightly wired-client curfew
+- wired-only firewall rules reduce DNS bypass, reject DNS-over-TLS, and enforce internet curfews
 - the curfew uses the MT3000's `eth1` ingress identity on the shared `br-lan`, so wireless clients are not included
 - the same wired-client curfew firewall rule is reused for the optional Saturday blockout
 - one reconciliation operation is used at boot, by recurring sync jobs, and after state changes

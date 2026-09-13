@@ -68,7 +68,7 @@ local function installed_capture_map()
   end
 
   local installed = {
-    ["uci -q get quietwrt.settings.schema_version"] = "5",
+    ["uci -q get quietwrt.settings.schema_version"] = "6",
     ["uci -q get quietwrt.settings.always_enabled"] = "1",
     ["uci -q get quietwrt.settings.workday_enabled"] = "1",
     ["uci -q get quietwrt.settings.after_work_enabled"] = "1",

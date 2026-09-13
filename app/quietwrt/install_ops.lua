@@ -1,5 +1,6 @@
 local apply_engine = require("quietwrt.apply_engine")
 local cron = require("quietwrt.cron")
+local dns = require("quietwrt.dns")
 local enforcement = require("quietwrt.enforcement")
 local firewall = require("quietwrt.firewall")
 local lists_store = require("quietwrt.lists_store")
@@ -77,6 +78,13 @@ local function rollback_install(context, rollback_state)
     end
   end
 
+  if rollback_state.dns_changed then
+    local dns_ok, dns_error = dns.restore_snapshot(context, rollback_state.original_dns)
+    if not dns_ok then
+      table.insert(rollback_errors, dns_error)
+    end
+  end
+
   return rollback_errors
 end
 
@@ -123,12 +131,14 @@ function M.install(context)
     bootstrapped_lists = lists.bootstrapped == true,
     original_adguard_config = parsed_config.content,
     original_firewall = firewall.capture_snapshot(context),
+    original_dns = dns.capture_snapshot(context),
     original_settings = original_settings,
     schedule_changed = false,
     boot_service_changed = false,
     applied = false,
     original_platform = nil,
     platform_changed = false,
+    dns_changed = false,
   }
 
   local platform_ok, platform_result = platform.prepare(context)
@@ -139,6 +149,12 @@ function M.install(context)
   rollback_state.original_platform = platform_result
   rollback_state.platform_changed = true
 
+  local dns_ok, dns_result, dns_changed = dns.apply_unfiltered_dnsmasq(context)
+  rollback_state.dns_changed = dns_changed == true
+  if not dns_ok then
+    local rollback_errors = rollback_install(context, rollback_state)
+    return false, append_rollback_errors(dns_result, rollback_errors)
+  end
   local schedule_ok, schedule_error = cron.install_schedule(context, staged_settings)
   if not schedule_ok then
     local rollback_errors = rollback_install(context, rollback_state)

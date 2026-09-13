@@ -200,6 +200,7 @@ function M.uninstalled_snapshot(now_table)
       dot_block = false,
       overnight_rule = false,
       wired_curfew = false,
+      unfiltered_wifi_dns = false,
       bridge_netfilter = false,
     },
     warnings = {},

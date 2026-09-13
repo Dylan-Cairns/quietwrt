@@ -7,6 +7,8 @@ M.BOARD_NAME = "glinet,mt3000-snand"
 M.BRIDGE_DEVICE = "br-lan"
 M.LAN_DEVICE = "eth1"
 M.CURFEW_EXTRA = "-m physdev --physdev-in eth1 ! --physdev-is-bridged"
+M.DOT_EXTRA = "-m physdev --physdev-in eth1 ! --physdev-is-bridged"
+M.DNS_EXTRA = "-m physdev --physdev-in eth1"
 M.BRIDGE_SYSCTL_CONTENT = "net.bridge.bridge-nf-call-iptables=1\n"
 
 M.CAPTURE_COMMANDS = {

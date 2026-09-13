@@ -14,7 +14,7 @@ local function installed_capture_map(overrides)
   end
 
   local installed = {
-    ["uci -q get quietwrt.settings.schema_version"] = "5",
+    ["uci -q get quietwrt.settings.schema_version"] = "6",
     ["uci -q get quietwrt.settings.always_enabled"] = "1",
     ["uci -q get quietwrt.settings.workday_enabled"] = "1",
     ["uci -q get quietwrt.settings.after_work_enabled"] = "1",
@@ -86,16 +86,54 @@ local function managed_firewall_capture(curfew_enabled, runtime_output)
   return capture
 end
 
+function TestServiceIntegration:test_runtime_firewall_validation_is_scoped_to_each_rule()
+  local fixture = helper.make_context({
+    capture_map = {
+      [firewall.RUNTIME_MANAGED_CHECK_COMMAND] = table.concat({
+        "-A zone_lan_prerouting -m physdev --physdev-in eth1 -p udp --dport 53 -m comment --comment QuietWrt-Intercept-DNS -j REDIRECT --to-ports 3053",
+        "-A zone_lan_forward --dport 853 -m comment --comment QuietWrt-Deny-DoT -j reject",
+      }, "\n"),
+    },
+  })
+
+  lu.assertFalse(firewall.runtime_matches_snapshot(fixture, firewall.desired_snapshot(false)))
+  fixture.cleanup()
+end
+
 function TestServiceIntegration:test_install_bootstraps_lists_sets_default_schedule_and_marks_installation()
+  local dns_state = {
+    server = "127.0.0.1#3053",
+    noresolv = "1",
+  }
   local fixture = helper.make_context({
     now = function()
       return { hour = 19, min = 0 }
+    end,
+    capture = function(command)
+      if command == "uci -q get dhcp.@dnsmasq[0].server" then
+        return dns_state.server
+      end
+      if command == "uci -q get dhcp.@dnsmasq[0].noresolv" then
+        return dns_state.noresolv
+      end
+      return helper.PLATFORM_CAPTURE[command] or ""
+    end,
+    execute = function(log, command)
+      table.insert(log, command)
+      if command:find("delete dhcp.@dnsmasq[0].server", 1, true) then
+        dns_state.server = ""
+      end
+      local noresolv = command:match("^uci set dhcp%.@dnsmasq%[0%]%.noresolv='([^']+)'$")
+      if noresolv then
+        dns_state.noresolv = noresolv
+      end
+      return 0
     end,
   })
   helper.write_config(fixture.paths.config_path, {
     "||example.com^",
     "@@||allowed.com^",
-  })
+  }, nil, "9.9.9.9")
 
   local context = service.new_context({
     env = fixture.env,
@@ -121,12 +159,15 @@ function TestServiceIntegration:test_install_bootstraps_lists_sets_default_sched
   lu.assertStrContains(crontab, "0 19 * * * /usr/bin/quietwrtctl sync")
 
   local joined = table.concat(fixture.commands, "\n")
-  lu.assertStrContains(joined, "uci set quietwrt.settings.schema_version='5'")
+  lu.assertStrContains(joined, "uci set quietwrt.settings.schema_version='6'")
   lu.assertStrContains(joined, "uci set quietwrt.settings.after_work_enabled='1'")
   lu.assertStrContains(joined, "uci set quietwrt.settings.password_vault_enabled='1'")
   lu.assertStrContains(joined, "uci set quietwrt.settings.saturday_blockout_enabled='0'")
   lu.assertStrContains(joined, "uci set quietwrt.settings.overnight_start='1900'")
   lu.assertStrContains(joined, "uci set firewall.quietwrt_curfew.enabled='0'")
+  lu.assertStrContains(joined, "uci set dhcp.@dnsmasq[0].noresolv='0'")
+  lu.assertStrContains(joined, "restart-dnsmasq")
+  lu.assertStrContains(helper.read_file(fixture.paths.config_path), "- '127.0.0.1:53'")
   fixture.cleanup()
 end
 
@@ -158,7 +199,44 @@ function TestServiceIntegration:test_install_upgrades_v4_without_resetting_setti
 
   lu.assertTrue(ok)
   local joined = table.concat(fixture.commands, "\n")
-  lu.assertStrContains(joined, "uci set quietwrt.settings.schema_version='5'")
+  lu.assertStrContains(joined, "uci set quietwrt.settings.schema_version='6'")
+  lu.assertStrContains(joined, "uci set quietwrt.settings.workday_enabled='0'")
+  lu.assertStrContains(joined, "uci set quietwrt.settings.overnight_enabled='1'")
+  lu.assertStrContains(joined, "uci set quietwrt.settings.saturday_blockout_enabled='1'")
+  lu.assertStrContains(joined, "uci set quietwrt.settings.overnight_start='2030'")
+  lu.assertStrContains(joined, "uci set quietwrt.settings.overnight_end='0530'")
+  fixture.cleanup()
+end
+
+function TestServiceIntegration:test_install_upgrades_v5_without_resetting_settings()
+  local fixture = helper.make_context({
+    capture_map = installed_capture_map({
+      ["uci -q get quietwrt.settings.schema_version"] = "5",
+      ["uci -q get quietwrt.settings.workday_enabled"] = "0",
+      ["uci -q get quietwrt.settings.overnight_enabled"] = "1",
+      ["uci -q get quietwrt.settings.saturday_blockout_enabled"] = "1",
+      ["uci -q get quietwrt.settings.overnight_start"] = "2030",
+      ["uci -q get quietwrt.settings.overnight_end"] = "0530",
+    }),
+    now = function()
+      return { hour = 12, min = 0, wday = 2 }
+    end,
+  })
+  helper.write_config(fixture.paths.config_path, {})
+  helper.write_file(fixture.paths.always_list_path, "example.com\n")
+  helper.write_file(fixture.paths.workday_list_path, "")
+  helper.write_file(fixture.paths.after_work_list_path, "")
+  helper.write_file(fixture.paths.password_vault_list_path, "")
+  helper.write_file(fixture.paths.passthrough_rules_path, "")
+
+  local ok = service.install(service.new_context({
+    env = fixture.env,
+    paths = fixture.paths,
+  }))
+
+  lu.assertTrue(ok)
+  local joined = table.concat(fixture.commands, "\n")
+  lu.assertStrContains(joined, "uci set quietwrt.settings.schema_version='6'")
   lu.assertStrContains(joined, "uci set quietwrt.settings.workday_enabled='0'")
   lu.assertStrContains(joined, "uci set quietwrt.settings.overnight_enabled='1'")
   lu.assertStrContains(joined, "uci set quietwrt.settings.saturday_blockout_enabled='1'")
@@ -392,7 +470,10 @@ function TestServiceIntegration:test_status_json_reports_flags_counts_schedules_
     capture_map = {
       ["uci -q get quietwrt.settings.workday_enabled"] = "0",
       ["uci -q get firewall.quietwrt_dns_int.name"] = "QuietWrt-Intercept-DNS",
+      ["uci -q get firewall.quietwrt_dns_int.extra"] = "-m physdev --physdev-in eth1",
+      ["uci -q get firewall.quietwrt_dns_int.dest_port"] = "3053",
       ["uci -q get firewall.quietwrt_dot_fwd.name"] = "QuietWrt-Deny-DoT",
+      ["uci -q get firewall.quietwrt_dot_fwd.extra"] = "-m physdev --physdev-in eth1 ! --physdev-is-bridged",
       ["uci -q get firewall.quietwrt_curfew.name"] = "QuietWrt-Internet-Curfew",
       ["uci -q get firewall.quietwrt_curfew.extra"] = "-m physdev --physdev-in eth1 ! --physdev-is-bridged",
     },
@@ -460,8 +541,8 @@ function TestServiceIntegration:test_status_reports_applied_when_desired_and_eff
     capture_map = managed_firewall_capture(
       false,
       table.concat({
-        "-A zone_lan_prerouting -m comment --comment QuietWrt-Intercept-DNS -j DNAT",
-        "-A zone_lan_forward -m comment --comment QuietWrt-Deny-DoT -j reject",
+        "-A zone_lan_prerouting -m physdev --physdev-in eth1 -p udp --dport 53 -m comment --comment QuietWrt-Intercept-DNS -j REDIRECT --to-ports 3053",
+        "-A zone_lan_forward -m physdev --physdev-in eth1 ! --physdev-is-bridged --dport 853 -m comment --comment QuietWrt-Deny-DoT -j reject",
       }, "\n")
     ),
   })
@@ -488,6 +569,35 @@ function TestServiceIntegration:test_status_reports_applied_when_desired_and_eff
   fixture.cleanup()
 end
 
+function TestServiceIntegration:test_status_is_degraded_when_adguard_upstream_bypasses_dnsmasq()
+  local fixture = installed_fixture({
+    capture_map = managed_firewall_capture(
+      false,
+      table.concat({
+        "-A zone_lan_prerouting -m physdev --physdev-in eth1 -p udp --dport 53 -m comment --comment QuietWrt-Intercept-DNS -j REDIRECT --to-ports 3053",
+        "-A zone_lan_forward -m physdev --physdev-in eth1 ! --physdev-is-bridged --dport 853 -m comment --comment QuietWrt-Deny-DoT -j zone_wan_dest_REJECT",
+      }, "\n")
+    ),
+  })
+  helper.write_config(fixture.paths.config_path, { "||example.com^" }, nil, "9.9.9.9")
+  helper.write_file(fixture.paths.always_list_path, "example.com\n")
+  helper.write_file(fixture.paths.workday_list_path, "")
+  helper.write_file(fixture.paths.after_work_list_path, "")
+  helper.write_file(fixture.paths.password_vault_list_path, "")
+  helper.write_file(fixture.paths.passthrough_rules_path, "")
+
+  local ok, output = service.status(service.new_context({
+    env = fixture.env,
+    paths = fixture.paths,
+  }), { json = true })
+
+  lu.assertTrue(ok)
+  lu.assertStrContains(output, '"enforcement_ready":false')
+  lu.assertStrContains(output, '"reconciliation_state":"degraded"')
+  lu.assertStrContains(output, "not forwarding allowed wired DNS queries")
+  fixture.cleanup()
+end
+
 function TestServiceIntegration:test_status_json_contract_exposes_router_time_schedule_windows_hardening_and_warnings()
   local fixture = installed_fixture({
     now = function()
@@ -511,7 +621,7 @@ function TestServiceIntegration:test_status_json_contract_exposes_router_time_sc
     json = true,
   })
   lu.assertTrue(ok)
-  lu.assertStrContains(output, '"schema_version":"5"')
+  lu.assertStrContains(output, '"schema_version":"6"')
   lu.assertStrContains(output, '"installed":true')
   lu.assertStrContains(output, '"router_time":"21:05"')
   lu.assertStrContains(output, '"schedule":{')
@@ -814,7 +924,7 @@ function TestServiceIntegration:test_same_boot_failsafe_is_idempotent_across_cro
   local fixture = installed_fixture()
   helper.write_config(fixture.paths.config_path, {
     "||blocked.example^",
-  })
+  }, nil, "9.9.9.9")
   helper.write_file(fixture.paths.always_list_path, "Example.com\n")
   helper.write_file(fixture.paths.workday_list_path, "")
   helper.write_file(fixture.paths.after_work_list_path, "")
@@ -844,8 +954,8 @@ function TestServiceIntegration:test_healthy_sync_is_idempotent_when_uci_and_run
     capture_map = managed_firewall_capture(
       false,
       table.concat({
-        "-A zone_lan_prerouting -m comment --comment QuietWrt-Intercept-DNS -j DNAT",
-        "-A zone_lan_forward -m comment --comment QuietWrt-Deny-DoT -j reject",
+        "-A zone_lan_prerouting -m physdev --physdev-in eth1 -p udp --dport 53 -m comment --comment QuietWrt-Intercept-DNS -j REDIRECT --to-ports 3053",
+        "-A zone_lan_forward -m physdev --physdev-in eth1 ! --physdev-is-bridged --dport 853 -m comment --comment QuietWrt-Deny-DoT -j reject",
       }, "\n")
     ),
   })
@@ -1065,7 +1175,7 @@ function TestServiceIntegration:test_failsafe_opens_firewall_before_clearing_adg
   })
   helper.write_config(fixture.paths.config_path, {
     "||blocked.example^",
-  })
+  }, nil, "9.9.9.9")
   helper.write_file(fixture.paths.always_list_path, "not a valid host\n")
   helper.write_file(fixture.paths.workday_list_path, "")
   helper.write_file(fixture.paths.after_work_list_path, "")
@@ -1083,6 +1193,7 @@ function TestServiceIntegration:test_failsafe_opens_firewall_before_clearing_adg
   local firewall_restart = assert(joined:find("restart-firewall", 1, true))
   local adguard_restart = assert(joined:find("restart-adguard", 1, true))
   lu.assertTrue(firewall_restart < adguard_restart)
+  lu.assertStrContains(helper.read_file(fixture.paths.config_path), "- '9.9.9.9'")
   fixture.cleanup()
 end
 
@@ -1224,7 +1335,7 @@ function TestServiceIntegration:test_set_toggle_updates_settings_and_reapplies()
 
   local joined = table.concat(fixture.commands, "\n")
   lu.assertStrContains(joined, "uci set quietwrt.settings.after_work_enabled='0'")
-  lu.assertStrContains(joined, "uci set quietwrt.settings.schema_version='5'")
+  lu.assertStrContains(joined, "uci set quietwrt.settings.schema_version='6'")
   fixture.cleanup()
 end
 

@@ -59,6 +59,24 @@ function M.is_ready(context, parsed_config)
   return M.enforcement_error(context, parsed_config) == nil
 end
 
+function M.policy_error(context, parsed_config)
+  local err = M.enforcement_error(context, parsed_config)
+  if err then
+    return err
+  end
+
+  if not adguard.has_dnsmasq_upstream(parsed_config) then
+    return "AdGuard Home is not forwarding allowed wired DNS queries to dnsmasq at "
+      .. adguard.DNSMASQ_UPSTREAM .. "."
+  end
+
+  return nil
+end
+
+function M.policy_is_ready(context, parsed_config)
+  return M.policy_error(context, parsed_config) == nil
+end
+
 function M.require_ready(context, parsed_config)
   local err = M.enforcement_error(context, parsed_config)
   if err then
@@ -81,12 +99,19 @@ function M.restore_config(context, content)
   return false, "AdGuard Home restart failed while restoring the previous config."
 end
 
-function M.apply_rules(context, parsed_config, compiled_rules)
-  if util.arrays_equal(parsed_config.rules, compiled_rules) then
+function M.apply_rules(context, parsed_config, compiled_rules, options)
+  options = options or {}
+  local manage_upstream = options.manage_upstream ~= false
+  if util.arrays_equal(parsed_config.rules, compiled_rules)
+      and (not manage_upstream or adguard.has_dnsmasq_upstream(parsed_config)) then
     return true, nil, false
   end
 
-  local updated_config = adguard.serialize_config(parsed_config, compiled_rules)
+  local updated_config = adguard.serialize_config(
+    parsed_config,
+    compiled_rules,
+    manage_upstream and adguard.DNSMASQ_UPSTREAM or nil
+  )
   return apply_config(context, parsed_config.content, updated_config)
 end
 

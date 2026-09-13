@@ -50,9 +50,11 @@ function Show-QuietWrtStatus {
     Write-Host "  Active rules: $($Status.active_rule_count)"
     Write-Host "  Desired active rules: $($Status.desired_active_rule_count)"
     Write-Host "  Effective active rules: $($Status.effective_active_rule_count)"
-    Write-Host "  DNS intercept hardening: $(if ($Status.hardening.dns_intercept) { 'yes' } else { 'no' })"
-    Write-Host "  DoT blocking hardening: $(if ($Status.hardening.dot_block) { 'yes' } else { 'no' })"
+    Write-Host "  Client scope: wired filtering only; Wi-Fi unrestricted"
+    Write-Host "  Wired DNS intercept ready: $(if ($Status.hardening.dns_intercept) { 'yes' } else { 'no' })"
+    Write-Host "  Wired DoT blocking ready: $(if ($Status.hardening.dot_block) { 'yes' } else { 'no' })"
     Write-Host "  Wired curfew rule ready: $(if ($Status.hardening.wired_curfew) { 'yes' } else { 'no' })"
+    Write-Host "  Unfiltered Wi-Fi DNS ready: $(if ($Status.hardening.unfiltered_wifi_dns) { 'yes' } else { 'no' })"
     Write-Host "  Bridge netfilter ready: $(if ($Status.hardening.bridge_netfilter) { 'yes' } else { 'no' })"
 
     $failsafe = if ($Status.PSObject.Properties['failsafe']) { $Status.failsafe } else { $null }

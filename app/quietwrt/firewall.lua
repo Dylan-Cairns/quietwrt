@@ -6,8 +6,7 @@ local util = require("quietwrt.util")
 local M = {}
 
 M.RUNTIME_MANAGED_CHECK_COMMAND = "iptables-save 2>/dev/null | grep -E 'QuietWrt-(Intercept-DNS|Deny-DoT|Internet-Curfew)'"
-
-local RUNTIME_RULE_NAMES = {
+M.NAMES = {
   dns = "QuietWrt-Intercept-DNS",
   dot = "QuietWrt-Deny-DoT",
   curfew = "QuietWrt-Internet-Curfew",
@@ -84,15 +83,24 @@ end
 
 function M.hardening_status(context)
   local dns_name = context.env.capture("uci -q get firewall.quietwrt_dns_int.name")
+  local dns_extra = context.env.capture("uci -q get firewall.quietwrt_dns_int.extra")
+  local dns_dport = context.env.capture("uci -q get firewall.quietwrt_dns_int.dest_port")
   local dot_name = context.env.capture("uci -q get firewall.quietwrt_dot_fwd.name")
+  local dot_extra = context.env.capture("uci -q get firewall.quietwrt_dot_fwd.extra")
   local overnight_name = context.env.capture("uci -q get firewall.quietwrt_curfew.name")
   local curfew_extra = context.env.capture("uci -q get firewall.quietwrt_curfew.extra")
+
+  local wired_dns = dns_name == "QuietWrt-Intercept-DNS"
+    and dns_extra == platform.DNS_EXTRA
+    and dns_dport == "3053"
+  local wired_dot = dot_name == "QuietWrt-Deny-DoT"
+    and dot_extra == platform.DOT_EXTRA
   local wired_curfew = overnight_name == "QuietWrt-Internet-Curfew"
     and curfew_extra == platform.CURFEW_EXTRA
 
   return {
-    dns_intercept = dns_name ~= nil and dns_name ~= "",
-    dot_block = dot_name ~= nil and dot_name ~= "",
+    dns_intercept = wired_dns,
+    dot_block = wired_dot,
     overnight_rule = overnight_name ~= nil and overnight_name ~= "",
     wired_curfew = wired_curfew,
     bridge_netfilter = platform.is_ready(context),
@@ -114,6 +122,8 @@ function M.desired_snapshot(curfew_enabled)
   return {
     quietwrt_dns_int = {
       _type = "redirect",
+      dest_port = "3053",
+      extra = platform.DNS_EXTRA,
       family = "ipv4",
       name = "QuietWrt-Intercept-DNS",
       proto = "tcp udp",
@@ -125,6 +135,7 @@ function M.desired_snapshot(curfew_enabled)
       _type = "rule",
       dest = "wan",
       dest_port = "853",
+      extra = platform.DOT_EXTRA,
       family = "ipv4",
       name = "QuietWrt-Deny-DoT",
       proto = "tcp udp",
@@ -165,18 +176,60 @@ end
 function M.runtime_matches_snapshot(context, snapshot)
   snapshot = snapshot or {}
   local output = runtime_output(context)
-  local expected = {
-    dns = snapshot.quietwrt_dns_int ~= nil,
-    dot = snapshot.quietwrt_dot_fwd ~= nil,
-    curfew = snapshot.quietwrt_curfew ~= nil
-      and tostring(snapshot.quietwrt_curfew.enabled or "1") ~= "0",
-  }
+  local lines_by_name = {}
+  for _, name in pairs(M.NAMES) do
+    lines_by_name[name] = {}
+  end
+  for _, line in ipairs(util.split_lines(output)) do
+    for _, name in pairs(M.NAMES) do
+      if line:find(name, 1, true) then
+        table.insert(lines_by_name[name], line)
+      end
+    end
+  end
 
-  for key, rule_name in pairs(RUNTIME_RULE_NAMES) do
-    local present = output:find(rule_name, 1, true) ~= nil
-    if present ~= expected[key] then
+  local function require_lines(name, expected, validator)
+    local lines = lines_by_name[name]
+    if expected ~= (#lines > 0) then
       return false
     end
+    if expected then
+      for _, line in ipairs(lines) do
+        if not validator(line) then
+          return false
+        end
+      end
+    end
+    return true
+  end
+
+  local wired_match = "--physdev-in " .. platform.LAN_DEVICE
+  if not require_lines(M.NAMES.dns, snapshot.quietwrt_dns_int ~= nil, function(line)
+    return line:find(wired_match, 1, true) ~= nil
+      and line:find("--dport 53", 1, true) ~= nil
+      and line:find("-j REDIRECT", 1, true) ~= nil
+      and line:find("--to-ports 3053", 1, true) ~= nil
+  end) then
+    return false
+  end
+
+  if not require_lines(M.NAMES.dot, snapshot.quietwrt_dot_fwd ~= nil, function(line)
+    return line:find(wired_match, 1, true) ~= nil
+      and line:find("--physdev-is-bridged", 1, true) ~= nil
+      and line:find("853", 1, true) ~= nil
+      and line:upper():find("REJECT", 1, true) ~= nil
+  end) then
+    return false
+  end
+
+  local curfew_expected = snapshot.quietwrt_curfew ~= nil
+    and tostring(snapshot.quietwrt_curfew.enabled or "1") ~= "0"
+  if not require_lines(M.NAMES.curfew, curfew_expected, function(line)
+    return line:find(wired_match, 1, true) ~= nil
+      and line:find("--physdev-is-bridged", 1, true) ~= nil
+      and line:upper():find("REJECT", 1, true) ~= nil
+  end) then
+    return false
   end
 
   return true

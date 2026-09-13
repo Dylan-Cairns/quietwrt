@@ -1,3 +1,4 @@
+local dns = require("quietwrt.dns")
 local enforcement = require("quietwrt.enforcement")
 local firewall = require("quietwrt.firewall")
 local lists_store = require("quietwrt.lists_store")
@@ -26,7 +27,9 @@ local function degraded_snapshot(context, now_table, install_state, failsafe, wa
   snapshot.installed = install_state.installed
   snapshot.schema_version = install_state.schema_version
   snapshot.install_state = install_state
-  snapshot.hardening = firewall.hardening_status(context)
+  local hardening = firewall.hardening_status(context)
+  hardening.unfiltered_wifi_dns = dns.is_ready(context)
+  snapshot.hardening = hardening
   snapshot.warnings = warnings or {}
   snapshot.failsafe = failsafe
   snapshot.reconciliation_state = failsafe.active and "failsafe_open" or "degraded"
@@ -74,7 +77,7 @@ local function status_snapshot(context)
   if config_error then
     table.insert(warnings, config_error)
   else
-    local enforcement_warning = enforcement.enforcement_error(context, parsed_config)
+    local enforcement_warning = enforcement.policy_error(context, parsed_config)
     if enforcement_warning then
       table.insert(warnings, enforcement_warning)
     end
@@ -89,11 +92,18 @@ local function status_snapshot(context)
     table.insert(warnings, platform_warning)
   end
 
+  local dns_warning = dns.readiness_error(context)
+  if dns_warning then
+    table.insert(warnings, dns_warning)
+  end
+
   local enforcement_ready = parsed_config ~= nil
-    and enforcement.is_ready(context, parsed_config)
+    and enforcement.policy_is_ready(context, parsed_config)
     and platform_warning == nil
+    and dns_warning == nil
     or false
   local hardening = firewall.hardening_status(context)
+  hardening.unfiltered_wifi_dns = dns.is_ready(context)
   local snapshot = runtime.build_view_state(
     parsed_config,
     lists,
@@ -116,12 +126,13 @@ local function status_snapshot(context)
   )
   local adguard_applied = parsed_config ~= nil
     and util.arrays_equal(parsed_config.rules, snapshot.active_rules)
+    and enforcement.policy_is_ready(context, parsed_config)
   local firewall_applied = firewall.snapshots_equal(
     firewall.capture_snapshot(context),
     desired_firewall
   ) and firewall.runtime_matches_snapshot(context, desired_firewall)
   snapshot.reconciliation_state = failsafe.active and "failsafe_open"
-    or adguard_applied and firewall_applied and "applied"
+    or adguard_applied and firewall_applied and dns_warning == nil and "applied"
     or "degraded"
   return snapshot, nil
 end
