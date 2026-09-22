@@ -347,19 +347,10 @@ function M.import_archive(context, content)
     end
   end
 
-  local timings = nil
-  local schedule_content = entries[schedule_backup.FILE_NAME]
-  if schedule_content ~= nil then
-    local timing_error
-    timings, timing_error = schedule_backup.parse(schedule_content)
-    if not timings then
-      return false, timing_error
-    end
-    summary.schedules_restored = true
-  end
-
-  if list_count == 0 and not summary.schedules_restored then
-    return false, "ZIP archive does not contain any QuietWrt backup files."
+  -- This import is exposed without authentication. Accept exported schedules in
+  -- the ZIP, but never parse or apply them; only restore_files may restore timings.
+  if list_count == 0 then
+    return false, "ZIP archive does not contain any QuietWrt blocklist files."
   end
 
   local valid, validation_error = rules.validate_lists(
@@ -370,14 +361,9 @@ function M.import_archive(context, content)
     return false, validation_error
   end
 
-  local next_settings = current.settings
-  if summary.schedules_restored then
-    next_settings = schedule_backup.overlay(current.settings, timings)
-  end
-
-  local ok, result = apply_restore(context, current, next_lists, next_settings, {
+  local ok, result = apply_restore(context, current, next_lists, current.settings, {
     lists = list_count > 0,
-    schedule = summary.schedules_restored,
+    schedule = false,
   })
   if not ok then
     return false, result

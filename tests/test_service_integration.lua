@@ -1612,7 +1612,7 @@ function TestServiceIntegration:test_import_blocklists_archive_merges_without_re
   fixture.cleanup()
 end
 
-function TestServiceIntegration:test_import_schedule_only_archive_preserves_enable_states()
+function TestServiceIntegration:test_import_archive_ignores_schedule_data()
   local fixture = installed_fixture({
     capture_map = {
       ["uci -q get quietwrt.settings.workday_enabled"] = "0",
@@ -1638,10 +1638,19 @@ function TestServiceIntegration:test_import_schedule_only_archive_preserves_enab
     overnight_start = "1800",
     overnight_end = "0600",
   }))
+  local settings_before = {}
+  for key, value in pairs(fixture.capture_state) do
+    settings_before[key] = value
+  end
+  helper.write_file(fixture.paths.crontab_path, "# original cron\n")
   local zip = assert(archive.zip({
     {
       name = schedule_backup.FILE_NAME,
       content = schedules,
+    },
+    {
+      name = "always-blocked.txt",
+      content = "new.example\n",
     },
   }))
 
@@ -1652,16 +1661,15 @@ function TestServiceIntegration:test_import_schedule_only_archive_preserves_enab
   local ok, result = service.import_blocklists_archive(context, zip)
 
   lu.assertTrue(ok)
-  lu.assertTrue(result.schedules_restored)
-  lu.assertEquals(result.added_count, 0)
-  lu.assertEquals(fixture.capture_state["uci -q get quietwrt.settings.workday_enabled"], "0")
-  lu.assertEquals(fixture.capture_state["uci -q get quietwrt.settings.overnight_enabled"], "0")
-  lu.assertEquals(fixture.capture_state["uci -q get quietwrt.settings.saturday_blockout_enabled"], "1")
-  lu.assertEquals(fixture.capture_state["uci -q get quietwrt.settings.workday_start"], "0600")
+  lu.assertFalse(result.schedules_restored)
+  lu.assertEquals(result.added_count, 1)
+  lu.assertEquals(helper.read_file(fixture.paths.always_list_path), "always.example\nnew.example\n")
+  lu.assertEquals(fixture.capture_state, settings_before)
+  lu.assertEquals(helper.read_file(fixture.paths.crontab_path), "# original cron\n")
   fixture.cleanup()
 end
 
-function TestServiceIntegration:test_import_invalid_schedule_archive_changes_nothing()
+function TestServiceIntegration:test_import_schedule_only_archive_changes_nothing()
   local fixture = installed_fixture()
   helper.write_config(fixture.paths.config_path, {})
   helper.write_file(fixture.paths.always_list_path, "current.example\n")
@@ -1683,7 +1691,7 @@ function TestServiceIntegration:test_import_invalid_schedule_archive_changes_not
   local ok, err = service.import_blocklists_archive(context, zip)
 
   lu.assertFalse(ok)
-  lu.assertStrContains(err, "missing workday_end")
+  lu.assertStrContains(err, "does not contain any QuietWrt blocklist files")
   lu.assertEquals(helper.read_file(fixture.paths.always_list_path), "current.example\n")
   lu.assertEquals(fixture.capture_state["uci -q get quietwrt.settings.workday_start"], "0400")
   lu.assertEquals(#fixture.commands, 0)

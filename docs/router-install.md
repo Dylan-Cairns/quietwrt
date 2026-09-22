@@ -139,7 +139,7 @@ The restore option:
 - preserves every current blocklist and lockout enable/disable choice
 - validates all selected files before making changes, then restores them and reconciles policy as one operation
 
-The ZIP downloaded from the LAN blocklists page also contains `quietwrt-schedules.txt`. Importing an older ZIP without this file still works and leaves current timings unchanged.
+The ZIP downloaded from the LAN blocklists page also contains `quietwrt-schedules.txt`. The unauthenticated LAN page imports only blocklists and ignores schedule data, preserving current timings and enable states. Older ZIPs without schedule data still work; ZIPs containing only schedules are rejected. Restore schedule timings using the SSH CLI.
 
 ## 6. Schedule And Reconciliation
 

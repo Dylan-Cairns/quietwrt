@@ -19,10 +19,6 @@ local function import_message(result)
     .. tostring(result.active_rule_count or 0)
     .. "."
 
-  if result.schedules_restored then
-    message = message .. " Schedule timings restored; enable states preserved."
-  end
-
   return message
 end
 
