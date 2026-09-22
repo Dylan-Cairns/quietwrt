@@ -334,6 +334,10 @@ function M.import_archive(context, content)
       end
 
       next_lists[definition.key] = util.sorted_unique(combined)
+      local limit_error = rules.host_limit_error(next_lists[definition.key])
+      if limit_error then
+        return false, definition.file_name .. ": " .. limit_error
+      end
       local added = #next_lists[definition.key] - before
       local duplicates = #imported_hosts - added
       summary.added_count = summary.added_count + added

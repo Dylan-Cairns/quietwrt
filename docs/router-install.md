@@ -272,6 +272,8 @@ The local web page is append-only by design:
 
 - it can add entries to `always`, `workday`, `after work`, or `password vault`
 - it can enable disabled blocklists and lockouts
+- web additions and ZIP imports are limited to 10,000 unique domains per list, including existing entries
+- it cannot move existing entries between lists
 - it cannot delete entries
 - it cannot edit passthrough rules
 - it cannot disable enforcement

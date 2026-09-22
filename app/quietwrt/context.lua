@@ -141,6 +141,7 @@ function M.write_atomic(env, path, content)
   )
 
   if not env.write_file(temp_path, content) then
+    env.remove_file(temp_path)
     return false, "Could not write a temporary file for " .. path .. "."
   end
 

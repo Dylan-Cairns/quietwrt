@@ -279,7 +279,7 @@ function TestServiceIntegration:test_load_view_state_requires_a_managed_install(
   fixture.cleanup()
 end
 
-function TestServiceIntegration:test_add_entry_moves_host_to_always_and_updates_config()
+function TestServiceIntegration:test_add_entry_rejects_move_without_writes()
   local fixture = installed_fixture()
 
   helper.write_config(fixture.paths.config_path, {})
@@ -295,11 +295,11 @@ function TestServiceIntegration:test_add_entry_moves_host_to_always_and_updates_
   })
 
   local result = service.add_entry(context, "always", "example.com")
-  lu.assertTrue(result.ok)
-  lu.assertStrContains(result.message, "Moved example.com")
-  lu.assertEquals(helper.read_file(fixture.paths.always_list_path), "example.com\n")
-  lu.assertEquals(helper.read_file(fixture.paths.workday_list_path), "")
-  lu.assertStrContains(helper.read_file(fixture.paths.config_path), "||example.com^")
+  lu.assertFalse(result.ok)
+  lu.assertStrContains(result.message, "cannot be moved")
+  lu.assertEquals(helper.read_file(fixture.paths.always_list_path), "")
+  lu.assertEquals(helper.read_file(fixture.paths.workday_list_path), "example.com\n")
+  lu.assertEquals(#fixture.commands, 0)
   fixture.cleanup()
 end
 
@@ -1905,5 +1905,38 @@ function TestServiceIntegration:test_download_blocklists_archive_reports_missing
   local ok, err = service.download_blocklists_archive(context, "zip")
   lu.assertFalse(ok)
   lu.assertStrContains(err, "after-work-blocked.txt")
+  fixture.cleanup()
+end
+
+function TestServiceIntegration:test_import_limit_checks_merged_lists_before_any_writes()
+  local rules = require("quietwrt.rules")
+  local fixture = installed_fixture()
+  helper.write_config(fixture.paths.config_path, {})
+  local original_config = helper.read_file(fixture.paths.config_path)
+  local hosts = {}
+  for i = 1, rules.MAX_HOSTS_PER_LIST - 1 do hosts[i] = "host" .. i .. ".example" end
+  local content = table.concat(hosts, "\n") .. "\n"
+  helper.write_file(fixture.paths.always_list_path, "existing.example\n")
+  helper.write_file(fixture.paths.workday_list_path, content)
+  helper.write_file(fixture.paths.after_work_list_path, "")
+  helper.write_file(fixture.paths.password_vault_list_path, "")
+  helper.write_file(fixture.paths.passthrough_rules_path, "")
+  local context = service.new_context({env=fixture.env, paths=fixture.paths})
+  local zip = assert(archive.zip({
+    {name="always-blocked.txt", content="new.example\n"},
+    {name="workday-blocked.txt", content="last.example\noverflow.example\n"},
+  }))
+  local ok, err = service.import_blocklists_archive(context, zip)
+  lu.assertFalse(ok)
+  lu.assertStrContains(err, "limited")
+  lu.assertEquals(helper.read_file(fixture.paths.always_list_path), "existing.example\n")
+  lu.assertEquals(helper.read_file(fixture.paths.workday_list_path), content)
+  lu.assertEquals(helper.read_file(fixture.paths.config_path), original_config)
+  lu.assertEquals(#fixture.commands, 0)
+  zip = assert(archive.zip({{name="workday-blocked.txt", content="host1.example\nlast.example\nlast.example\n"}}))
+  ok, err = service.import_blocklists_archive(context, zip)
+  lu.assertTrue(ok)
+  lu.assertEquals(err.added_count, 1)
+  lu.assertEquals(#rules.parse_hosts_file(helper.read_file(fixture.paths.workday_list_path)), rules.MAX_HOSTS_PER_LIST)
   fixture.cleanup()
 end

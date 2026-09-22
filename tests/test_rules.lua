@@ -25,38 +25,36 @@ function TestRules:test_scheduled_lists_reject_existing_always_host()
   lu.assertStrContains(result.message, "already always blocked")
 end
 
-function TestRules:test_always_add_moves_from_workday()
-  local result = rules.apply_addition({}, {
-    workday = { "example.com" },
-    after_work = {},
-  }, "always", "example.com")
-  lu.assertTrue(result.ok)
-  lu.assertEquals(result.always_hosts, { "example.com" })
-  lu.assertEquals(result.workday_hosts, {})
-  lu.assertStrContains(result.message, "Moved example.com")
+function TestRules:test_addition_preserves_existing_membership()
+  for _, source in ipairs({"always", "workday", "after_work", "password_vault"}) do
+    for _, destination in ipairs({"always", "workday", "after_work", "password_vault"}) do
+      local lists = {always={}, workday={}, after_work={}, password_vault={}}
+      lists[source] = {"example.com"}
+      local result = rules.apply_addition(lists.always, lists, destination, "example.com")
+      lu.assertFalse(result.ok)
+      for name, hosts in pairs(lists) do
+        lu.assertEquals(result[name .. "_hosts"], hosts)
+      end
+    end
+  end
 end
 
-function TestRules:test_after_work_add_moves_from_workday()
-  local result = rules.apply_addition({}, {
-    workday = { "example.com" },
-    after_work = {},
-  }, "after_work", "example.com")
-  lu.assertTrue(result.ok)
-  lu.assertEquals(result.workday_hosts, {})
-  lu.assertEquals(result.after_work_hosts, { "example.com" })
-  lu.assertStrContains(result.message, "After work blocked")
-end
-
-function TestRules:test_password_vault_add_moves_from_after_work()
-  local result = rules.apply_addition({}, {
-    workday = {},
-    after_work = { "example.com" },
-    password_vault = {},
-  }, "password_vault", "example.com")
-  lu.assertTrue(result.ok)
-  lu.assertEquals(result.after_work_hosts, {})
-  lu.assertEquals(result.password_vault_hosts, { "example.com" })
-  lu.assertStrContains(result.message, "Password vault blocked")
+function TestRules:test_addition_enforces_unique_domain_limit()
+  local hosts = {}
+  for i = 1, rules.MAX_HOSTS_PER_LIST - 1 do hosts[i] = "host" .. i .. ".example" end
+  for _, destination in ipairs({"always", "workday", "after_work", "password_vault"}) do
+    local lists = {always={}, workday={}, after_work={}, password_vault={}}
+    lists[destination] = hosts
+    local result = rules.apply_addition(lists.always, lists, destination, "last.example")
+    lu.assertTrue(result.ok)
+    lists[destination] = result[destination .. "_hosts"]
+    local duplicate = rules.apply_addition(lists.always, lists, destination, "last.example")
+    lu.assertEquals(duplicate.kind, "info")
+    result = rules.apply_addition(lists.always, lists, destination, "overflow.example")
+    lu.assertFalse(result.ok)
+    lu.assertStrContains(result.message, "limited")
+    lu.assertEquals(#result[destination .. "_hosts"], rules.MAX_HOSTS_PER_LIST)
+  end
 end
 
 function TestRules:test_compile_active_rules_unions_always_and_scheduled_lists()

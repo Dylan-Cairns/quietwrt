@@ -22,6 +22,7 @@ local function capture_cgi(env, options)
   end
 
   io.read = function(length)
+    if env.FORBID_READ then error("Request body must not be read") end
     return tostring(env.STDIN or ""):sub(1, length)
   end
 
@@ -350,4 +351,23 @@ function TestApp:test_cli_exports_and_restores_schedule_only_backup()
   lu.assertEquals(fixture.capture_state["uci -q get quietwrt.settings.workday_enabled"], "0")
   lu.assertEquals(fixture.capture_state["uci -q get quietwrt.settings.overnight_enabled"], "0")
   fixture.cleanup()
+end
+
+function TestApp:test_invalid_and_oversized_requests_are_rejected_before_reading()
+  for _, case in ipairs({
+    {"multipart/form-data; boundary=x", "2097153"},
+    {"application/x-www-form-urlencoded", "8193"},
+    {"application/x-www-form-urlencoded", "-1"},
+    {"application/x-www-form-urlencoded", "1.5"},
+    {"application/x-www-form-urlencoded", "invalid"},
+  }) do
+    local output = capture_cgi({REQUEST_METHOD="POST", CONTENT_TYPE=case[1],
+      CONTENT_LENGTH=case[2], FORBID_READ=true})
+    lu.assertStrContains(output, "kind=error")
+  end
+end
+
+function TestApp:test_truncated_post_is_rejected()
+  local output = capture_cgi({REQUEST_METHOD="POST", CONTENT_LENGTH="20", STDIN="entry=a"})
+  lu.assertStrContains(output, "Request%20body%20is%20truncated")
 end

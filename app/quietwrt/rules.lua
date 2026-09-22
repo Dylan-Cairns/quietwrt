@@ -2,6 +2,15 @@ local util = require("quietwrt.util")
 
 local M = {}
 
+M.MAX_HOSTS_PER_LIST = 10000
+
+function M.host_limit_error(hosts)
+  if #hosts > M.MAX_HOSTS_PER_LIST then
+    return "Each blocklist is limited to " .. M.MAX_HOSTS_PER_LIST .. " domains."
+  end
+  return nil
+end
+
 local DESTINATION_LABELS = {
   always = "Always blocked",
   workday = "Workday blocked",
@@ -322,88 +331,29 @@ function M.apply_addition(always_hosts, scheduled_lists, destination, raw_value)
   local in_always = util.contains(always_hosts, host)
   local current_scheduled_destination = find_scheduled_destination(scheduled_lists, host)
 
-  if destination == "always" then
-    if in_always then
-      return build_result(false, "info", host .. " is already always blocked.", host, always_hosts, scheduled_lists)
-    end
-
-    table.insert(always_hosts, host)
-    always_hosts = util.sorted_unique(always_hosts)
-
-    if current_scheduled_destination ~= nil then
-      scheduled_lists[current_scheduled_destination] = util.remove_value(scheduled_lists[current_scheduled_destination], host)
-      scheduled_lists[current_scheduled_destination] = util.sorted_unique(scheduled_lists[current_scheduled_destination])
-      return build_result(
-        true,
-        "success",
-        "Moved " .. host .. " from " .. destination_label(current_scheduled_destination) .. " to Always blocked.",
-        host,
-        always_hosts,
-        scheduled_lists
-      )
-    end
-
-    return build_result(true, "success", "Added " .. host .. " to Always blocked.", host, always_hosts, scheduled_lists)
-  end
-
-  if DESTINATION_LABELS[destination] == nil or destination == "always" then
-    return {
-      ok = false,
-      kind = "error",
-      message = "Choose Always blocked, Workday blocked, After work blocked, or Password vault blocked.",
-    }
+  if DESTINATION_LABELS[destination] == nil then
+    return { ok = false, kind = "error", message = "Choose Always blocked, Workday blocked, After work blocked, or Password vault blocked." }
   end
 
   if in_always then
-    return build_result(
-      false,
-      "error",
-      host .. " is already always blocked.",
-      host,
-      always_hosts,
-      scheduled_lists
-    )
+    return build_result(false, destination == "always" and "info" or "error",
+      host .. " is already always blocked.", host, always_hosts, scheduled_lists)
   end
-
-  if current_scheduled_destination == destination then
-    return build_result(
-      false,
-      "info",
-      host .. " is already " .. destination_label(destination):lower() .. ".",
-      host,
-      always_hosts,
-      scheduled_lists
-    )
-  end
-
   if current_scheduled_destination ~= nil then
-    scheduled_lists[current_scheduled_destination] = util.remove_value(scheduled_lists[current_scheduled_destination], host)
-    scheduled_lists[current_scheduled_destination] = util.sorted_unique(scheduled_lists[current_scheduled_destination])
+    return build_result(false, current_scheduled_destination == destination and "info" or "error",
+      host .. " is already in " .. destination_label(current_scheduled_destination)
+        .. ". Existing entries cannot be moved through this page.", host, always_hosts, scheduled_lists)
   end
 
-  table.insert(scheduled_lists[destination], host)
-  scheduled_lists[destination] = util.sorted_unique(scheduled_lists[destination])
-
-  if current_scheduled_destination ~= nil then
-    return build_result(
-      true,
-      "success",
-      "Moved " .. host .. " from " .. destination_label(current_scheduled_destination) .. " to "
-        .. destination_label(destination) .. ".",
-      host,
-      always_hosts,
-      scheduled_lists
-    )
+  local target = destination == "always" and always_hosts or scheduled_lists[destination]
+  if #target >= M.MAX_HOSTS_PER_LIST then
+    return build_result(false, "error", "Each blocklist is limited to " .. M.MAX_HOSTS_PER_LIST
+      .. " domains.", host, always_hosts, scheduled_lists)
   end
-
-  return build_result(
-    true,
-    "success",
-    "Added " .. host .. " to " .. destination_label(destination) .. ".",
-    host,
-    always_hosts,
-    scheduled_lists
-  )
+  table.insert(target, host)
+  table.sort(target)
+  return build_result(true, "success", "Added " .. host .. " to " .. destination_label(destination) .. ".",
+    host, always_hosts, scheduled_lists)
 end
 
 return M

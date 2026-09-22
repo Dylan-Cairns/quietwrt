@@ -286,7 +286,7 @@ local function render_add_entry_form(script_name)
     parts,
     [[<section class="panel form-panel field-stack">
 <div class="section-title"><h2>Add a domain, hostname, or URL</h2></div>
-<p class="field-help">New entries are normalized to a canonical hostname and stored in exactly one blocklist.</p>
+<p class="field-help">New entries are normalized to a canonical hostname and stored in exactly one blocklist. Existing entries cannot be moved. Each list supports up to 10,000 domains.</p>
 <form method="post" action="]],
     util.html_escape(script_name),
     [[">

@@ -53,16 +53,22 @@ function M.run_cgi(options)
   local method = os.getenv("REQUEST_METHOD") or "GET"
 
   if method == "POST" then
-    local length = tonumber(os.getenv("CONTENT_LENGTH") or "0") or 0
+    local raw_length = os.getenv("CONTENT_LENGTH") or "0"
+    local length = tonumber(raw_length)
     local content_type = os.getenv("CONTENT_TYPE") or ""
+    local multipart = content_type:find("multipart/form-data", 1, true) ~= nil
+    local max_length = multipart and 2097152 or 8192
+    if not raw_length:match("^%d+$") or not length or length > max_length then
+      view.send_redirect(script_name, "error", "Invalid or oversized request body.")
+      return
+    end
     local body = read_stdin(length)
+    if #body ~= length then
+      view.send_redirect(script_name, "error", "Request body is truncated.")
+      return
+    end
 
-    if content_type:find("multipart/form-data", 1, true) then
-      if length > 2097152 then
-        view.send_redirect(script_name, "error", "Uploaded ZIP is too large.")
-        return
-      end
-
+    if multipart then
       local form, form_error = util.parse_multipart_form_data(body, content_type)
       if not form then
         view.send_redirect(script_name, "error", form_error)

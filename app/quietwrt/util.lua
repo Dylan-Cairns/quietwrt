@@ -159,9 +159,9 @@ function M.write_file(path, content)
     return false
   end
 
-  handle:write(content or "")
-  handle:close()
-  return true
+  local written = handle:write(content or "")
+  local closed = handle:close()
+  return written ~= nil and written ~= false and closed ~= nil and closed ~= false
 end
 
 function M.command_succeeded(result)

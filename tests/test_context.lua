@@ -56,3 +56,29 @@ function TestContext:test_with_lock_rejects_overlapping_mutation()
   fixture.cleanup()
 end
 
+
+function TestContext:test_failed_write_or_close_never_replaces_target()
+  local util = require("quietwrt.util")
+  for _, failure in ipairs({"write", "close"}) do
+    local original_open = io.open
+    local closed, renamed, removed = false, false, false
+    io.open = function()
+      return {
+        write = function() if failure == "write" then return nil, "disk full" end return true end,
+        close = function() closed = true; if failure == "close" then return nil, "disk full" end return true end,
+      }
+    end
+    local ran, ok, err = pcall(context_helpers.write_atomic, {
+      write_file=util.write_file, pid=function() return "test" end,
+      rename_file=function() renamed=true; return true end,
+      remove_file=function() removed=true end,
+    }, "mock-target", "replacement")
+    io.open = original_open
+    lu.assertTrue(ran)
+    lu.assertFalse(ok)
+    lu.assertStrContains(err, "Could not write")
+    lu.assertTrue(closed)
+    lu.assertFalse(renamed)
+    lu.assertTrue(removed)
+  end
+end
